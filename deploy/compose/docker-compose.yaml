@@ -47,7 +47,7 @@ services:
       - ./temporal-dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/development.yaml
 
   temporal-ui:
-    image: temporalio/ui:2.31
+    image: temporalio/ui:latest
     container_name: arcana-temporal-ui
     depends_on:
       - temporal

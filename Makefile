@@ -75,8 +75,9 @@ kind-up: ## Create Kind cluster
 	  echo "Kind cluster '$(CLUSTER_NAME)' already exists."; \
 	else \
 	  echo "Creating Kind cluster '$(CLUSTER_NAME)'..."; \
-	  kind create cluster --name $(CLUSTER_NAME) --config $(KIND_CONFIG) --kubeconfig $(KUBECONFIG); \
-	  echo "Kind cluster created. KUBECONFIG=$(KUBECONFIG)"; \
+	  kind create cluster --name $(CLUSTER_NAME) --config $(KIND_CONFIG) --kubeconfig $(KUBECONFIG) \
+	    && echo "Kind cluster created. KUBECONFIG=$(KUBECONFIG)" \
+	    || { echo "ERROR: Kind cluster creation failed."; exit 1; }; \
 	fi
 
 kind-down: ## Delete Kind cluster
