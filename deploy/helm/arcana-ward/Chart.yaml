@@ -1,0 +1,6 @@
+apiVersion: v2
+name: arcana-ward
+description: Arcana policy and guardrails service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

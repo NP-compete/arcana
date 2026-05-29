@@ -1,0 +1,31 @@
+replicaCount: 1
+
+image:
+  registry: localhost:5001
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 3000
+
+env: {}
+
+probes:
+  liveness: "/"
+  readiness: "/"
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 100m
+  limits:
+    memory: 256Mi
+    cpu: 500m
