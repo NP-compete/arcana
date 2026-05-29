@@ -1,0 +1,11 @@
+go 1.23
+
+use (
+	./cmd/engine
+	./cmd/operator
+	./cmd/mesh
+	./cmd/api
+	./cmd/agui
+	./pkg/common
+	./pkg/crds
+)

@@ -1,0 +1,47 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanabudgets.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaBudget
+    listKind: ArcanaBudgetList
+    plural: arcanabudgets
+    singular: arcanabudget
+    shortNames:
+      - abud
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                monthlyTokenBudget:
+                  type: integer
+                monthlyComputeBudgetUSD:
+                  type: number
+                alertThresholds:
+                  type: array
+                  items:
+                    type: integer
+                routingStrategy:
+                  type: string
+                  enum: ["baar", "seqroute", "fixed"]
+            status:
+              type: object
+              properties:
+                currentSpendUSD:
+                  type: number
+                tokensUsed:
+                  type: integer
+                projectedMonthEndUSD:
+                  type: number
+      subresources:
+        status: {}
