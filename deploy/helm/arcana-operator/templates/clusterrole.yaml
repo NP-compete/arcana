@@ -1,0 +1,27 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "arcana-operator.fullname" . }}
+  labels:
+    {{- include "arcana-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["arcana.io"]
+    resources:
+      - arcanaagents
+      - arcanatenants
+      - arcanaskillregistries
+      - arcanaevalsuites
+      - arcanaroles
+      - arcanabudgets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["arcana.io"]
+    resources:
+      - arcanaagents/status
+      - arcanatenants/status
+      - arcanaskillregistries/status
+      - arcanaevalsuites/status
+      - arcanaroles/status
+      - arcanabudgets/status
+    verbs: ["get", "update", "patch"]
+{{- end }}
