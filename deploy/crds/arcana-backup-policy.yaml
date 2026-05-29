@@ -1,0 +1,70 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanabackuppolicies.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaBackupPolicy
+    listKind: ArcanaBackupPolicyList
+    plural: arcanabackuppolicies
+    singular: arcanabackuppolicy
+    shortNames:
+      - abkp
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                schedule:
+                  type: string
+                  description: "Cron expression defining backup schedule"
+                retention:
+                  type: object
+                  properties:
+                    count:
+                      type: integer
+                    ttl:
+                      type: string
+                destinations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: ["s3", "gcs", "azure"]
+                      bucket:
+                        type: string
+                      prefix:
+                        type: string
+            status:
+              type: object
+              properties:
+                lastBackupTime:
+                  type: string
+                  format: date-time
+                lastBackupStatus:
+                  type: string
+                  enum: ["success", "failed", "running"]
+                backupCount:
+                  type: integer
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Schedule
+          type: string
+          jsonPath: .spec.schedule
+        - name: Last Status
+          type: string
+          jsonPath: .status.lastBackupStatus
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
