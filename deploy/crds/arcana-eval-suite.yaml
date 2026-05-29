@@ -1,0 +1,65 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanaevalsuites.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaEvalSuite
+    listKind: ArcanaEvalSuiteList
+    plural: arcanaevalsuites
+    singular: arcanaevalsuite
+    shortNames:
+      - aes
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                targetSkill:
+                  type: string
+                gateMode:
+                  type: string
+                  enum: ["advisory", "warn", "block"]
+                judges:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      tier:
+                        type: string
+                        enum: ["deterministic", "script", "llm", "trajectory"]
+                cases:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      input:
+                        type: string
+                      expectedOutput:
+                        type: string
+                      negative:
+                        type: boolean
+            status:
+              type: object
+              properties:
+                lastRunTime:
+                  type: string
+                  format: date-time
+                badge:
+                  type: string
+                passRate:
+                  type: number
+      subresources:
+        status: {}
