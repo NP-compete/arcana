@@ -8,4 +8,10 @@ use (
 	./cmd/agui
 	./pkg/common
 	./pkg/crds
+	./pkg/agui
+	./pkg/a2a
+	./pkg/acp
+	./pkg/mcp
+	./pkg/temporal
+	./pkg/ward
 )
