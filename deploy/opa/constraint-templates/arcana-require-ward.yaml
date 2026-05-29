@@ -1,0 +1,23 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: arcana-require-ward
+spec:
+  crd:
+    spec:
+      names:
+        kind: ArcanaRequireWard
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties: {}
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package arcana.requireward
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "ArcanaAgent"
+          not input.review.object.metadata.annotations["arcana.io/ward-policy"]
+          msg := "ArcanaAgent must have arcana.io/ward-policy annotation"
+        }
