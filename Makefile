@@ -113,23 +113,26 @@ build: build-go build-python build-studio ## Build all services
 
 build-go: ## Build Go services
 	@echo "Building Go services..."
+	@mkdir -p bin
 	@for svc in $(GO_SERVICES); do \
 	  echo "  → cmd/$$svc"; \
-	  cd cmd/$$svc && go build -o ../../bin/arcana-$$svc . && cd ../..; \
+	  (cd cmd/$$svc && go build -o ../../bin/arcana-$$svc .) || exit 1; \
 	done
 	@echo "Go services built → bin/"
 
-build-python: ## Build Python services (install deps)
+build-python: ## Build Python services (install deps in venvs)
 	@echo "Building Python services..."
 	@for svc in $(PYTHON_SERVICES); do \
 	  echo "  → services/$$svc"; \
-	  cd services/$$svc && python3 -m pip install -e ".[dev]" --quiet && cd ../..; \
+	  (cd services/$$svc \
+	    && python3 -m venv .venv \
+	    && .venv/bin/pip install -e ".[dev]" --quiet) || exit 1; \
 	done
 	@echo "Python services ready."
 
 build-studio: ## Build Studio (TypeScript)
 	@echo "Building Studio..."
-	@cd services/studio && npm ci --silent && npm run build
+	@(cd services/studio && npm ci --silent && npm run build)
 	@echo "Studio built."
 
 # ──────────────────────────────────────────────
@@ -141,17 +144,17 @@ test: test-go test-python test-studio ## Run all tests
 test-go: ## Run Go tests
 	@echo "Running Go tests..."
 	@for svc in $(GO_SERVICES); do \
-	  cd cmd/$$svc && go test ./... && cd ../..; \
+	  (cd cmd/$$svc && go test ./...) || exit 1; \
 	done
 
 test-python: ## Run Python tests
 	@echo "Running Python tests..."
 	@for svc in $(PYTHON_SERVICES); do \
-	  cd services/$$svc && python3 -m pytest tests/ && cd ../..; \
+	  (cd services/$$svc && .venv/bin/python -m pytest tests/) || exit 1; \
 	done
 
 test-studio: ## Run Studio tests
-	@cd services/studio && npm test
+	@(cd services/studio && npm test)
 
 # ──────────────────────────────────────────────
 # Lint & Format
