@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Lint Go
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: .
+
+  lint-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check services/skills/ services/ward/
+
+  lint-ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: services/studio
+        run: npm ci && npm run lint
+
+  test-go:
+    runs-on: ubuntu-latest
+    needs: lint-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - run: |
+          for svc in engine operator mesh api agui; do
+            cd cmd/$svc && go test ./... && cd ../..
+          done
+
+  test-python:
+    runs-on: ubuntu-latest
+    needs: lint-python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          for svc in skills ward; do
+            cd services/$svc && pip install -e ".[dev]" && pytest tests/ && cd ../..
+          done
+
+  build-images:
+    runs-on: ubuntu-latest
+    needs: [test-go, test-python]
+    strategy:
+      matrix:
+        service:
+          - {name: engine, context: ".", dockerfile: cmd/engine/Dockerfile}
+          - {name: operator, context: ".", dockerfile: cmd/operator/Dockerfile}
+          - {name: mesh, context: ".", dockerfile: cmd/mesh/Dockerfile}
+          - {name: api, context: ".", dockerfile: cmd/api/Dockerfile}
+          - {name: agui, context: ".", dockerfile: cmd/agui/Dockerfile}
+          - {name: skills, context: ".", dockerfile: services/skills/Dockerfile}
+          - {name: ward, context: ".", dockerfile: services/ward/Dockerfile}
+          - {name: studio, context: ".", dockerfile: services/studio/Dockerfile}
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t arcana-${{ matrix.service.name }}:ci -f ${{ matrix.service.dockerfile }} ${{ matrix.service.context }}
+
+  crds-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          for f in deploy/crds/*.yaml; do
+            echo "Validating $f..."
+            python3 -c "import yaml; yaml.safe_load(open('$f'))"
+          done

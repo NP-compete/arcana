@@ -1,0 +1,42 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanaroles.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaRole
+    listKind: ArcanaRoleList
+    plural: arcanaroles
+    singular: arcanarole
+    shortNames:
+      - arole
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                permissions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      resource:
+                        type: string
+                      verbs:
+                        type: array
+                        items:
+                          type: string
+                inheritFrom:
+                  type: array
+                  items:
+                    type: string
