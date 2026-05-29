@@ -1,0 +1,11 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: ArcanaBudgetLimit
+metadata:
+  name: enforce-budget-cap
+spec:
+  match:
+    kinds:
+      - apiGroups: ["arcana.io"]
+        kinds: ["ArcanaBudget"]
+  parameters:
+    maxBudgetUSD: 10000

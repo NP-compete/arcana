@@ -1,0 +1,78 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanapromotions.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaPromotion
+    listKind: ArcanaPromotionList
+    plural: arcanapromotions
+    singular: arcanapromotion
+    shortNames:
+      - aprom
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                sourceEnv:
+                  type: string
+                targetEnv:
+                  type: string
+                agent:
+                  type: string
+                  description: "Reference to an ArcanaAgent resource"
+                approvers:
+                  type: array
+                  items:
+                    type: string
+                autoPromote:
+                  type: boolean
+                gates:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      type:
+                        type: string
+                        enum: ["eval", "canary", "manual"]
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                approvedBy:
+                  type: array
+                  items:
+                    type: string
+                startedAt:
+                  type: string
+                  format: date-time
+                completedAt:
+                  type: string
+                  format: date-time
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Source
+          type: string
+          jsonPath: .spec.sourceEnv
+        - name: Target
+          type: string
+          jsonPath: .spec.targetEnv
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
