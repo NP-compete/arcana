@@ -1,6 +1,6 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /src
-COPY cmd/engine/go.mod ./
+COPY cmd/engine/go.mod cmd/engine/go.sum ./
 RUN go mod download
 COPY cmd/engine/ ./
 RUN CGO_ENABLED=0 go build -o /arcana-engine .
