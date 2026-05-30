@@ -63,7 +63,11 @@ Create the name of the service account to use
 Image reference
 */}}
 {{- define "arcana-engine.image" -}}
-{{- $registry := .Values.image.registry | default "localhost:5001" -}}
+{{- $repo := .Values.image.repository | default "arcana-engine" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
-{{- printf "%s/arcana-engine:%s" $registry $tag -}}
+{{- if .Values.image.registry -}}
+{{- printf "%s/%s:%s" .Values.image.registry $repo $tag -}}
+{{- else -}}
+{{- printf "%s:%s" $repo $tag -}}
+{{- end -}}
 {{- end }}
