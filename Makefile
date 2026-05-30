@@ -16,8 +16,10 @@ KIND_CONFIG     := deploy/kind/cluster.yaml
 KUBECONFIG      := $(shell pwd)/kubeconfig-$(CLUSTER_NAME)
 NAMESPACE       := arcana
 
-GO_SERVICES     := engine operator mesh api agui
-PYTHON_SERVICES := skills ward
+GO_SERVICES     := engine operator mesh api agui blueprint oracle \
+                   codex-router codex-searcher codex-ingestor codex-scorer \
+                   tools sandbox audit scheduler registry finops gitops
+PYTHON_SERVICES := skills ward memory connectors graph forge models probe annotate
 TS_SERVICES     := studio
 ALL_IMAGES      := $(addprefix arcana-,$(GO_SERVICES) $(PYTHON_SERVICES) $(TS_SERVICES))
 

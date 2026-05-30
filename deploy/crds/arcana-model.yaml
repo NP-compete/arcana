@@ -1,0 +1,71 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanamodels.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaModel
+    listKind: ArcanaModelList
+    plural: arcanamodels
+    singular: arcanamodel
+    shortNames:
+      - amod
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                provider:
+                  type: string
+                modelId:
+                  type: string
+                task:
+                  type: string
+                  enum: ["chat", "completion", "embedding", "code", "vision", "audio"]
+                maxTokens:
+                  type: integer
+                costPerInputToken:
+                  type: string
+                costPerOutputToken:
+                  type: string
+                serving:
+                  type: object
+                  properties:
+                    replicas:
+                      type: integer
+                    accelerator:
+                      type: string
+                    maxBatchSize:
+                      type: integer
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                endpoint:
+                  type: string
+                latencyP50Ms:
+                  type: integer
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Provider
+          type: string
+          jsonPath: .spec.provider
+        - name: Task
+          type: string
+          jsonPath: .spec.task
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

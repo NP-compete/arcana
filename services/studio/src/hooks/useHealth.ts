@@ -5,6 +5,7 @@ export interface ServiceHealth {
   status: string;
   latency: string;
   port: number;
+  plane: string;
 }
 
 export interface SystemHealth {

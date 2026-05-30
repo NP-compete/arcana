@@ -1,0 +1,90 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanablueprints.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaBlueprint
+    listKind: ArcanaBlueprintList
+    plural: arcanablueprints
+    singular: arcanablueprint
+    shortNames:
+      - abp
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                description:
+                  type: string
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      type:
+                        type: string
+                        enum: ["agent", "tool", "conditional", "parallel", "human_review"]
+                      model:
+                        type: string
+                      skills:
+                        type: array
+                        items:
+                          type: string
+                      tools:
+                        type: array
+                        items:
+                          type: string
+                      dependsOn:
+                        type: array
+                        items:
+                          type: string
+                edges:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      from:
+                        type: string
+                      to:
+                        type: string
+                      condition:
+                        type: string
+                fallback:
+                  type: object
+                  properties:
+                    strategy:
+                      type: string
+                      enum: ["retry", "alternate", "human_escalation"]
+                    maxRetries:
+                      type: integer
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                lastExecuted:
+                  type: string
+                  format: date-time
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Nodes
+          type: integer
+          jsonPath: .spec.nodes
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
