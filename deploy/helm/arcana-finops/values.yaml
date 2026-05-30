@@ -1,0 +1,33 @@
+replicaCount: 1
+
+image:
+  registry: ""
+  repository: arcana-finops
+  tag: dev
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8105
+
+env:
+  PORT: "8105"
+
+probes:
+  liveness: "/healthz"
+  readiness: "/readyz"
+
+resources:
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 128Mi
+    cpu: 250m
