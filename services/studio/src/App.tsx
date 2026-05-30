@@ -10,16 +10,13 @@ import {
   Page,
   PageSidebar,
   PageSidebarBody,
-  Title,
   Label,
-  Flex,
-  FlexItem,
 } from "@patternfly/react-core";
 import {
   HomeIcon,
   RobotIcon,
   CubesIcon,
-  SearchIcon,
+  ChartBarIcon,
   CogIcon,
 } from "@patternfly/react-icons";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -34,7 +31,7 @@ const NAV_ITEMS: { id: NavPage; label: string; icon: React.ReactNode }[] = [
   { id: "dashboard", label: "Dashboard", icon: <HomeIcon /> },
   { id: "agents", label: "Agents", icon: <RobotIcon /> },
   { id: "skills", label: "Skills", icon: <CubesIcon /> },
-  { id: "evaluations", label: "Evaluations", icon: <SearchIcon /> },
+  { id: "evaluations", label: "Evaluations", icon: <ChartBarIcon /> },
   { id: "settings", label: "Settings", icon: <CogIcon /> },
 ];
 
@@ -52,27 +49,20 @@ export const App = () => {
   return (
     <Page
       masthead={
-        <Masthead>
+        <Masthead className="arcana-masthead">
           <MastheadMain>
             <MastheadBrand data-codemods>
-              <Flex spaceItems={{ default: "spaceItemsSm" }} alignItems={{ default: "alignItemsCenter" }}>
-                <FlexItem>
-                  <Title headingLevel="h1" size="lg">
-                    Arcana
-                  </Title>
-                </FlexItem>
-                <FlexItem>
-                  <Label color="purple" isCompact>Studio</Label>
-                </FlexItem>
-              </Flex>
+              <div className="arcana-logo">
+                <div className="arcana-logo-icon">A</div>
+                <span className="arcana-logo-text">Arcana</span>
+                <span className="arcana-logo-badge">Studio</span>
+              </div>
             </MastheadBrand>
           </MastheadMain>
           <MastheadContent>
-            <Flex justifyContent={{ default: "justifyContentFlexEnd" }} style={{ width: "100%" }}>
-              <FlexItem>
-                <Label color="blue" isCompact>Dev</Label>
-              </FlexItem>
-            </Flex>
+            <div style={{ display: "flex", justifyContent: "flex-end", width: "100%", alignItems: "center", gap: 12 }}>
+              <Label className="arcana-env-badge" isCompact>Dev Environment</Label>
+            </div>
           </MastheadContent>
         </Masthead>
       }
