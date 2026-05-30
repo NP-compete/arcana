@@ -18,6 +18,11 @@ func main() {
 		fmt.Fprint(w, "ok")
 	})
 
+	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+
 	log.Printf("arcana-operator starting on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

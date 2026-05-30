@@ -100,6 +100,8 @@ spec:
       labels:
         app.kubernetes.io/name: temporal-ui
     spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       containers:
         - name: temporal-ui
           image: temporalio/ui:latest
@@ -107,7 +109,7 @@ spec:
             - name: TEMPORAL_ADDRESS
               value: temporal.arcana.svc.cluster.local:7233
             - name: TEMPORAL_CORS_ORIGINS
-              value: http://localhost:3000
+              value: http://localhost:8080
           ports:
             - containerPort: 8080
               name: http
