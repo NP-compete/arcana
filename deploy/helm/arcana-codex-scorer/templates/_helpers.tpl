@@ -32,8 +32,8 @@ Create chart name and version as used by the chart label.
 Common labels
 */}}
 {{- define "arcana-codex-scorer.labels" -}}
-helm.sh/chart: {{{ include "arcana-codex-scorer.chart" . }}}
-{{{ include "arcana-codex-scorer.selectorLabels" . }}}
+helm.sh/chart: {{ include "arcana-codex-scorer.chart" . }}
+{{ include "arcana-codex-scorer.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -44,7 +44,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 Selector labels
 */}}
 {{- define "arcana-codex-scorer.selectorLabels" -}}
-app.kubernetes.io/name: {{{ include "arcana-codex-scorer.name" . }}}
+app.kubernetes.io/name: {{ include "arcana-codex-scorer.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 

@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-connectors.fullname" . }}}
+  name: {{ include "arcana-connectors.fullname" . }}
   labels:
     {{- include "arcana-connectors.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-connectors.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-connectors.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-connectors.serviceAccountName" . }}
       containers:
         - name: connectors
-          image: {{{ include "arcana-connectors.image" . }}}
+          image: {{ include "arcana-connectors.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

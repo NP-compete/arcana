@@ -32,8 +32,8 @@ Create chart name and version as used by the chart label.
 Common labels
 */}}
 {{- define "arcana-memory.labels" -}}
-helm.sh/chart: {{{ include "arcana-memory.chart" . }}}
-{{{ include "arcana-memory.selectorLabels" . }}}
+helm.sh/chart: {{ include "arcana-memory.chart" . }}
+{{ include "arcana-memory.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -44,7 +44,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 Selector labels
 */}}
 {{- define "arcana-memory.selectorLabels" -}}
-app.kubernetes.io/name: {{{ include "arcana-memory.name" . }}}
+app.kubernetes.io/name: {{ include "arcana-memory.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 

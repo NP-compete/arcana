@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-graph.fullname" . }}}
+  name: {{ include "arcana-graph.fullname" . }}
   labels:
     {{- include "arcana-graph.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-graph.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-graph.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-graph.serviceAccountName" . }}
       containers:
         - name: graph
-          image: {{{ include "arcana-graph.image" . }}}
+          image: {{ include "arcana-graph.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

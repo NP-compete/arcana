@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-codex-router.fullname" . }}}
+  name: {{ include "arcana-codex-router.fullname" . }}
   labels:
     {{- include "arcana-codex-router.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-codex-router.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-codex-router.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-codex-router.serviceAccountName" . }}
       containers:
         - name: router
-          image: {{{ include "arcana-codex-router.image" . }}}
+          image: {{ include "arcana-codex-router.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

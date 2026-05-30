@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-forge.fullname" . }}}
+  name: {{ include "arcana-forge.fullname" . }}
   labels:
     {{- include "arcana-forge.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-forge.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-forge.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-forge.serviceAccountName" . }}
       containers:
         - name: forge
-          image: {{{ include "arcana-forge.image" . }}}
+          image: {{ include "arcana-forge.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

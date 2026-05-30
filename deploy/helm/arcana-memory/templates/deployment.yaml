@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-memory.fullname" . }}}
+  name: {{ include "arcana-memory.fullname" . }}
   labels:
     {{- include "arcana-memory.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-memory.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-memory.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-memory.serviceAccountName" . }}
       containers:
         - name: memory
-          image: {{{ include "arcana-memory.image" . }}}
+          image: {{ include "arcana-memory.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

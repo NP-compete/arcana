@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-tools.fullname" . }}}
+  name: {{ include "arcana-tools.fullname" . }}
   labels:
     {{- include "arcana-tools.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-tools.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-tools.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-tools.serviceAccountName" . }}
       containers:
         - name: tools
-          image: {{{ include "arcana-tools.image" . }}}
+          image: {{ include "arcana-tools.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-registry.fullname" . }}}
+  name: {{ include "arcana-registry.fullname" . }}
   labels:
     {{- include "arcana-registry.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-registry.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-registry.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-registry.serviceAccountName" . }}
       containers:
         - name: registry
-          image: {{{ include "arcana-registry.image" . }}}
+          image: {{ include "arcana-registry.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

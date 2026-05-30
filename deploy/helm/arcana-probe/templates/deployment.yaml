@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-probe.fullname" . }}}
+  name: {{ include "arcana-probe.fullname" . }}
   labels:
     {{- include "arcana-probe.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-probe.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-probe.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-probe.serviceAccountName" . }}
       containers:
         - name: probe
-          image: {{{ include "arcana-probe.image" . }}}
+          image: {{ include "arcana-probe.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

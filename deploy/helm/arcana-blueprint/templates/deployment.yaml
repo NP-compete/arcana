@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-blueprint.fullname" . }}}
+  name: {{ include "arcana-blueprint.fullname" . }}
   labels:
     {{- include "arcana-blueprint.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-blueprint.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-blueprint.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-blueprint.serviceAccountName" . }}
       containers:
         - name: blueprint
-          image: {{{ include "arcana-blueprint.image" . }}}
+          image: {{ include "arcana-blueprint.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
