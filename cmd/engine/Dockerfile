@@ -1,9 +1,9 @@
 FROM golang:1.23-alpine AS builder
-WORKDIR /build
-COPY go.work go.work
-COPY cmd/engine/ cmd/engine/
-COPY pkg/ pkg/
-RUN cd cmd/engine && go build -o /arcana-engine .
+WORKDIR /src
+COPY cmd/engine/go.mod ./
+RUN go mod download
+COPY cmd/engine/ ./
+RUN CGO_ENABLED=0 go build -o /arcana-engine .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /arcana-engine /arcana-engine
