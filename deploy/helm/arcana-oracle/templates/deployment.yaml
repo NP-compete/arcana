@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-oracle.fullname" . }}}
+  name: {{ include "arcana-oracle.fullname" . }}
   labels:
     {{- include "arcana-oracle.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-oracle.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-oracle.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-oracle.serviceAccountName" . }}
       containers:
         - name: oracle
-          image: {{{ include "arcana-oracle.image" . }}}
+          image: {{ include "arcana-oracle.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

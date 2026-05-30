@@ -32,8 +32,8 @@ Create chart name and version as used by the chart label.
 Common labels
 */}}
 {{- define "arcana-oracle.labels" -}}
-helm.sh/chart: {{{ include "arcana-oracle.chart" . }}}
-{{{ include "arcana-oracle.selectorLabels" . }}}
+helm.sh/chart: {{ include "arcana-oracle.chart" . }}
+{{ include "arcana-oracle.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -44,7 +44,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 Selector labels
 */}}
 {{- define "arcana-oracle.selectorLabels" -}}
-app.kubernetes.io/name: {{{ include "arcana-oracle.name" . }}}
+app.kubernetes.io/name: {{ include "arcana-oracle.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 

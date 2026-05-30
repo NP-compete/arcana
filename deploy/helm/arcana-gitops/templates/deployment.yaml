@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-gitops.fullname" . }}}
+  name: {{ include "arcana-gitops.fullname" . }}
   labels:
     {{- include "arcana-gitops.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-gitops.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-gitops.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-gitops.serviceAccountName" . }}
       containers:
         - name: gitops
-          image: {{{ include "arcana-gitops.image" . }}}
+          image: {{ include "arcana-gitops.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

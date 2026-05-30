@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-annotate.fullname" . }}}
+  name: {{ include "arcana-annotate.fullname" . }}
   labels:
     {{- include "arcana-annotate.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-annotate.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-annotate.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-annotate.serviceAccountName" . }}
       containers:
         - name: annotate
-          image: {{{ include "arcana-annotate.image" . }}}
+          image: {{ include "arcana-annotate.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

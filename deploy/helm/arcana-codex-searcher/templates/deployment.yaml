@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-codex-searcher.fullname" . }}}
+  name: {{ include "arcana-codex-searcher.fullname" . }}
   labels:
     {{- include "arcana-codex-searcher.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-codex-searcher.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-codex-searcher.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-codex-searcher.serviceAccountName" . }}
       containers:
         - name: searcher
-          image: {{{ include "arcana-codex-searcher.image" . }}}
+          image: {{ include "arcana-codex-searcher.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

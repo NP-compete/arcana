@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{{ include "arcana-registry.fullname" . }}}
+  name: {{ include "arcana-registry.fullname" . }}
   labels:
     {{- include "arcana-registry.labels" . | nindent 4 }}
 spec:
