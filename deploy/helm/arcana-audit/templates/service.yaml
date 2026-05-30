@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{{ include "arcana-audit.fullname" . }}}
+  name: {{ include "arcana-audit.fullname" . }}
   labels:
     {{- include "arcana-audit.labels" . | nindent 4 }}
 spec:

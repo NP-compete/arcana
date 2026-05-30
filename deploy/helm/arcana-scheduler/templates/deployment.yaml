@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-scheduler.fullname" . }}}
+  name: {{ include "arcana-scheduler.fullname" . }}
   labels:
     {{- include "arcana-scheduler.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-scheduler.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-scheduler.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-scheduler.serviceAccountName" . }}
       containers:
         - name: scheduler
-          image: {{{ include "arcana-scheduler.image" . }}}
+          image: {{ include "arcana-scheduler.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

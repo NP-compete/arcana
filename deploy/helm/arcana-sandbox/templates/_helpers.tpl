@@ -32,8 +32,8 @@ Create chart name and version as used by the chart label.
 Common labels
 */}}
 {{- define "arcana-sandbox.labels" -}}
-helm.sh/chart: {{{ include "arcana-sandbox.chart" . }}}
-{{{ include "arcana-sandbox.selectorLabels" . }}}
+helm.sh/chart: {{ include "arcana-sandbox.chart" . }}
+{{ include "arcana-sandbox.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -44,7 +44,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 Selector labels
 */}}
 {{- define "arcana-sandbox.selectorLabels" -}}
-app.kubernetes.io/name: {{{ include "arcana-sandbox.name" . }}}
+app.kubernetes.io/name: {{ include "arcana-sandbox.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 

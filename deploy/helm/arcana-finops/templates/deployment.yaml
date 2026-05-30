@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-finops.fullname" . }}}
+  name: {{ include "arcana-finops.fullname" . }}
   labels:
     {{- include "arcana-finops.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-finops.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-finops.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-finops.serviceAccountName" . }}
       containers:
         - name: finops
-          image: {{{ include "arcana-finops.image" . }}}
+          image: {{ include "arcana-finops.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
