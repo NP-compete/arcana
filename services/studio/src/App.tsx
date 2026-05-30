@@ -35,16 +35,25 @@ const NAV_ITEMS: { id: NavPage; label: string; icon: React.ReactNode }[] = [
   { id: "settings", label: "Settings", icon: <CogIcon /> },
 ];
 
-const PAGE_MAP: Record<NavPage, React.ReactNode> = {
-  dashboard: <DashboardPage />,
-  agents: <AgentsPage />,
-  skills: <SkillsPage />,
-  evaluations: <EvaluationsPage />,
-  settings: <SettingsPage />,
-};
-
 export const App = () => {
   const [activePage, setActivePage] = useState<NavPage>("dashboard");
+
+  const renderPage = () => {
+    switch (activePage) {
+      case "dashboard":
+        return <DashboardPage onNavigate={(page) => setActivePage(page as NavPage)} />;
+      case "agents":
+        return <AgentsPage />;
+      case "skills":
+        return <SkillsPage />;
+      case "evaluations":
+        return <EvaluationsPage />;
+      case "settings":
+        return <SettingsPage />;
+      default:
+        return <DashboardPage onNavigate={(page) => setActivePage(page as NavPage)} />;
+    }
+  };
 
   return (
     <Page
@@ -87,7 +96,7 @@ export const App = () => {
         </PageSidebar>
       }
     >
-      {PAGE_MAP[activePage]}
+      {renderPage()}
     </Page>
   );
 };
