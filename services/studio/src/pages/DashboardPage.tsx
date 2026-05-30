@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   PageSection,
   Card,
@@ -10,6 +11,17 @@ import {
   Button,
   Tooltip,
   Label,
+  Modal,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  ModalVariant,
+  Form,
+  FormGroup,
+  TextInput,
+  TextArea,
+  FormSelect,
+  FormSelectOption,
 } from "@patternfly/react-core";
 import {
   CheckCircleIcon,
@@ -41,6 +53,7 @@ import {
   ProcessAutomationIcon,
 } from "@patternfly/react-icons";
 import { useHealth, type ServiceHealth } from "../hooks/useHealth";
+import { ARCANA_AGENT_YAML } from "../constants/arcanaAgentYaml";
 
 const PLANE_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   infra:   { label: "Infrastructure", color: "#3182ce", icon: <DatabaseIcon /> },
@@ -110,14 +123,30 @@ const CRDS = [
   { name: "ArcanaPlatform", short: "apf", purpose: "Platform-wide config" },
 ];
 
-const QUICK_ACTIONS = [
-  { label: "Deploy Agent", desc: "Create an ArcanaAgent CR", icon: <RobotIcon /> },
-  { label: "Register Skill", desc: "Add to the skill catalog", icon: <CubesIcon /> },
-  { label: "Run Evaluation", desc: "Test a skill with judges", icon: <CheckCircleIcon /> },
-  { label: "View Workflows", desc: "Open Temporal UI", icon: <ClusterIcon />, href: "http://localhost:8233" },
-  { label: "Submit Task", desc: "Run an agent task via engine", icon: <AutomationIcon /> },
-  { label: "Search Knowledge", desc: "Query the Codex search engine", icon: <SearchIcon /> },
+type QuickActionKey =
+  | "deploy-agent"
+  | "register-skill"
+  | "run-evaluation"
+  | "view-workflows"
+  | "submit-task"
+  | "search-knowledge";
+
+const QUICK_ACTIONS: {
+  key: QuickActionKey;
+  label: string;
+  desc: string;
+  icon: React.ReactNode;
+  href?: string;
+}[] = [
+  { key: "deploy-agent", label: "Deploy Agent", desc: "Create an ArcanaAgent CR", icon: <RobotIcon /> },
+  { key: "register-skill", label: "Register Skill", desc: "Add to the skill catalog", icon: <CubesIcon /> },
+  { key: "run-evaluation", label: "Run Evaluation", desc: "Test a skill with judges", icon: <CheckCircleIcon /> },
+  { key: "view-workflows", label: "View Workflows", desc: "Open Temporal UI", icon: <ClusterIcon />, href: "http://localhost:8233" },
+  { key: "submit-task", label: "Submit Task", desc: "Run an agent task via engine", icon: <AutomationIcon /> },
+  { key: "search-knowledge", label: "Search Knowledge", desc: "Query the Codex search engine", icon: <SearchIcon /> },
 ];
+
+const MODEL_OPTIONS = ["gpt-4o", "claude-sonnet", "gpt-4o-mini"];
 
 function groupByPlane(services: ServiceHealth[]): Record<string, ServiceHealth[]> {
   const groups: Record<string, ServiceHealth[]> = {};
@@ -129,14 +158,127 @@ function groupByPlane(services: ServiceHealth[]): Record<string, ServiceHealth[]
   return groups;
 }
 
-export const DashboardPage = () => {
+interface DashboardPageProps {
+  onNavigate?: (page: string) => void;
+}
+
+export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
   const { health, error, loading, refresh } = useHealth(5000);
+
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [yamlModalOpen, setYamlModalOpen] = useState(false);
+
+  const [taskAgent, setTaskAgent] = useState("");
+  const [taskInput, setTaskInput] = useState("");
+  const [taskModel, setTaskModel] = useState(MODEL_OPTIONS[0]);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
+  const [taskResult, setTaskResult] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchSubmitting, setSearchSubmitting] = useState(false);
+  const [searchResult, setSearchResult] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const healthyCount = health?.services.filter((s) => s.status === "healthy").length ?? 0;
   const totalCount = health?.services.length ?? 0;
   const allHealthy = healthyCount === totalCount && totalCount > 0;
   const planeGroups = health ? groupByPlane(health.services) : {};
   const planeOrder = ["infra", "agent", "data", "tool", "model", "govern", "quality", "ops"];
+
+  const handleQuickAction = (key: QuickActionKey, href?: string) => {
+    switch (key) {
+      case "deploy-agent":
+        onNavigate?.("agents");
+        break;
+      case "register-skill":
+        onNavigate?.("skills");
+        break;
+      case "run-evaluation":
+        onNavigate?.("evaluations");
+        break;
+      case "view-workflows":
+        if (href) window.open(href, "_blank");
+        break;
+      case "submit-task":
+        setTaskResult(null);
+        setTaskError(null);
+        setTaskModalOpen(true);
+        break;
+      case "search-knowledge":
+        setSearchResult(null);
+        setSearchError(null);
+        setSearchModalOpen(true);
+        break;
+    }
+  };
+
+  const closeTaskModal = () => {
+    setTaskModalOpen(false);
+    setTaskError(null);
+  };
+
+  const closeSearchModal = () => {
+    setSearchModalOpen(false);
+    setSearchError(null);
+  };
+
+  const handleSubmitTask = async () => {
+    if (!taskAgent.trim()) {
+      setTaskError("Agent name is required");
+      return;
+    }
+    setTaskSubmitting(true);
+    setTaskError(null);
+    setTaskResult(null);
+    try {
+      const res = await fetch("/api/v1/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent: taskAgent.trim(),
+          input: { text: taskInput },
+          model: { model: taskModel },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      setTaskResult(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setTaskError(e instanceof Error ? e.message : "Failed to submit task");
+    } finally {
+      setTaskSubmitting(false);
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchError("Search query is required");
+      return;
+    }
+    setSearchSubmitting(true);
+    setSearchError(null);
+    setSearchResult(null);
+    try {
+      const res = await fetch("/api/v1/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchQuery.trim(), profile: "default", top_k: 10 }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      setSearchResult(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "Search failed");
+    } finally {
+      setSearchSubmitting(false);
+    }
+  };
 
   return (
     <>
@@ -302,23 +444,24 @@ export const DashboardPage = () => {
               <CardBody>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {QUICK_ACTIONS.map((action) => (
-                    <div
+                    <Button
                       key={action.label}
+                      variant="plain"
                       className="action-card"
-                      style={{ padding: 16, display: "flex", alignItems: "center", gap: 14, textAlign: "left" }}
-                      onClick={() => action.href && window.open(action.href, "_blank")}
+                      style={{ padding: 16, display: "flex", alignItems: "center", gap: 14, textAlign: "left", width: "100%", height: "auto" }}
+                      onClick={() => handleQuickAction(action.key, action.href)}
                     >
                       <div className="action-card-icon" style={{ margin: 0, flexShrink: 0, width: 40, height: 40 }}>
                         {action.icon}
                       </div>
-                      <div>
+                      <div style={{ flex: 1, textAlign: "left" }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{action.label}</div>
                         <div style={{ fontSize: 12, color: "var(--pf-t--global--text--color--subtle)" }}>{action.desc}</div>
                       </div>
                       <div style={{ marginLeft: "auto", color: "var(--pf-t--global--text--color--subtle)" }}>
                         <ArrowRightIcon />
                       </div>
-                    </div>
+                    </Button>
                   ))}
                 </div>
               </CardBody>
@@ -328,7 +471,11 @@ export const DashboardPage = () => {
           <GridItem span={12}>
             <Card className="stat-card">
               <CardTitle>
-                <div className="section-title" style={{ margin: 0 }}>Agentic Protocol Stack</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div className="section-title" style={{ margin: 0 }}>
+                    Agentic Protocol Stack
+                  </div>
+                </div>
               </CardTitle>
               <CardBody>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -349,7 +496,7 @@ export const DashboardPage = () => {
                   <div className="section-title" style={{ margin: 0 }}>
                     Custom Resource Definitions ({CRDS.length})
                   </div>
-                  <Button variant="link" icon={<PlusCircleIcon />} isInline>
+                  <Button variant="link" icon={<PlusCircleIcon />} isInline onClick={() => setYamlModalOpen(true)}>
                     Create Resource
                   </Button>
                 </div>
@@ -376,6 +523,147 @@ export const DashboardPage = () => {
           </GridItem>
         </Grid>
       </PageSection>
+
+      <Modal
+        variant={ModalVariant.medium}
+        isOpen={taskModalOpen}
+        onClose={closeTaskModal}
+        aria-labelledby="submit-task-title"
+      >
+        <ModalHeader title="Submit Task" labelId="submit-task-title" />
+        <ModalBody>
+          {taskError && (
+            <Alert variant="danger" title="Task submission failed" isInline style={{ marginBottom: 16 }}>
+              {taskError}
+            </Alert>
+          )}
+          {taskResult && (
+            <Alert variant="success" title="Task submitted" isInline style={{ marginBottom: 16 }}>
+              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>{taskResult}</pre>
+            </Alert>
+          )}
+          <Form id="submit-task-form">
+            <FormGroup label="Agent name" isRequired fieldId="task-agent">
+              <TextInput
+                id="task-agent"
+                value={taskAgent}
+                onChange={(_e, v) => setTaskAgent(v)}
+                isRequired
+              />
+            </FormGroup>
+            <FormGroup label="Input" fieldId="task-input">
+              <TextArea
+                id="task-input"
+                value={taskInput}
+                onChange={(_e, v) => setTaskInput(v)}
+                rows={4}
+              />
+            </FormGroup>
+            <FormGroup label="Model" fieldId="task-model">
+              <FormSelect
+                id="task-model"
+                value={taskModel}
+                onChange={(_e, v) => setTaskModel(v)}
+                aria-label="Model"
+              >
+                {MODEL_OPTIONS.map((m) => (
+                  <FormSelectOption key={m} value={m} label={m} />
+                ))}
+              </FormSelect>
+            </FormGroup>
+          </Form>
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            onClick={handleSubmitTask}
+            isDisabled={taskSubmitting}
+            isLoading={taskSubmitting}
+          >
+            Submit
+          </Button>
+          <Button variant="link" onClick={closeTaskModal}>
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        variant={ModalVariant.medium}
+        isOpen={searchModalOpen}
+        onClose={closeSearchModal}
+        aria-labelledby="search-knowledge-title"
+      >
+        <ModalHeader title="Search Knowledge" labelId="search-knowledge-title" />
+        <ModalBody>
+          {searchError && (
+            <Alert variant="danger" title="Search failed" isInline style={{ marginBottom: 16 }}>
+              {searchError}
+            </Alert>
+          )}
+          {searchResult && (
+            <Alert variant="success" title="Search results" isInline style={{ marginBottom: 16 }}>
+              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap", maxHeight: 300, overflow: "auto" }}>
+                {searchResult}
+              </pre>
+            </Alert>
+          )}
+          <Form id="search-knowledge-form">
+            <FormGroup label="Query" isRequired fieldId="search-query">
+              <TextInput
+                id="search-query"
+                value={searchQuery}
+                onChange={(_e, v) => setSearchQuery(v)}
+                isRequired
+              />
+            </FormGroup>
+          </Form>
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            onClick={handleSearch}
+            isDisabled={searchSubmitting}
+            isLoading={searchSubmitting}
+          >
+            Search
+          </Button>
+          <Button variant="link" onClick={closeSearchModal}>
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        variant={ModalVariant.medium}
+        isOpen={yamlModalOpen}
+        onClose={() => setYamlModalOpen(false)}
+        aria-labelledby="create-resource-title"
+      >
+        <ModalHeader
+          title="ArcanaAgent YAML Template"
+          description="Apply this Custom Resource to deploy an agent to the cluster."
+          labelId="create-resource-title"
+        />
+        <ModalBody>
+          <pre style={{
+            margin: 0,
+            padding: 16,
+            background: "var(--pf-t--global--background--color--secondary--default)",
+            borderRadius: 4,
+            fontSize: 12,
+            overflow: "auto",
+          }}
+          >
+            {ARCANA_AGENT_YAML}
+          </pre>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="primary" onClick={() => setYamlModalOpen(false)}>
+            Close
+          </Button>
+        </ModalFooter>
+      </Modal>
     </>
   );
 };
