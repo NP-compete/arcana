@@ -1,8 +1,9 @@
 replicaCount: 1
 
 image:
-  registry: localhost:5001
-  tag: "0.1.0"
+  registry: ""
+  repository: arcana-studio
+  tag: dev
   pullPolicy: IfNotPresent
 
 nameOverride: ""
@@ -24,8 +25,8 @@ probes:
 
 resources:
   requests:
-    memory: 128Mi
-    cpu: 100m
+    memory: 32Mi
+    cpu: 25m
   limits:
-    memory: 256Mi
-    cpu: 500m
+    memory: 64Mi
+    cpu: 100m

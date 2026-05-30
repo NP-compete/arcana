@@ -1,8 +1,9 @@
 replicaCount: 1
 
 image:
-  registry: localhost:5001
-  tag: "0.1.0"
+  registry: ""
+  repository: arcana-mesh
+  tag: dev
   pullPolicy: IfNotPresent
 
 nameOverride: ""
@@ -18,8 +19,7 @@ service:
 
 env:
   PORT: "8083"
-  NATS_URL: "nats://nats:4222"
-
+  NATS_URL: "nats://nats.arcana.svc.cluster.local:4222"
 
 probes:
   liveness: "/healthz"
@@ -27,8 +27,8 @@ probes:
 
 resources:
   requests:
-    memory: 128Mi
-    cpu: 100m
+    memory: 64Mi
+    cpu: 50m
   limits:
-    memory: 256Mi
-    cpu: 500m
+    memory: 128Mi
+    cpu: 250m
