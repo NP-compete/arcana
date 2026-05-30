@@ -1,0 +1,60 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: arcanacodexes.arcana.io
+spec:
+  group: arcana.io
+  names:
+    kind: ArcanaCodex
+    listKind: ArcanaCodexList
+    plural: arcanacodexes
+    singular: arcanacodex
+    shortNames:
+      - acx
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                shards:
+                  type: integer
+                embeddingModel:
+                  type: string
+                fusionProfile:
+                  type: string
+                  enum: ["default", "semantic_first", "navigation_link", "recent_first"]
+                retentionDays:
+                  type: integer
+                contradictionDetection:
+                  type: boolean
+            status:
+              type: object
+              properties:
+                totalDocuments:
+                  type: integer
+                totalShards:
+                  type: integer
+                indexHealth:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Docs
+          type: integer
+          jsonPath: .status.totalDocuments
+        - name: Shards
+          type: integer
+          jsonPath: .status.totalShards
+        - name: Health
+          type: string
+          jsonPath: .status.indexHealth
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

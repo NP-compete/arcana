@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+import hashlib
+import threading
+import uuid
+from collections import defaultdict
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="Arcana Annotate", version="0.1.0", description="Annotation loop")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class Annotation(BaseModel):
+    id: str
+    question: str
+    original: str
+    corrected: str
+    agent_id: str
+    user_id: str
+    embedding: list[float] = Field(default_factory=list)
+    topic: str = "general"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CrystallizationCandidate(BaseModel):
+    topic: str
+    agent_id: str
+    correction_count: int
+    sample_questions: list[str]
+    ready: bool
+
+
+class SubmitAnnotationRequest(BaseModel):
+    question: str
+    original_answer: str
+    corrected_answer: str
+    agent_id: str
+    user_id: str
+    topic: str = "general"
+
+
+class SearchRequest(BaseModel):
+    query: str
+    similarity_threshold: float = 0.5
+
+
+class CrystallizeRequest(BaseModel):
+    agent_id: str | None = None
+    topic: str | None = None
+    min_corrections: int = 3
+
+
+_store_lock = threading.Lock()
+_annotations: dict[str, Annotation] = {}
+_CRYSTALLIZATION_THRESHOLD = 3
+
+
+def _simple_embedding(text: str) -> list[float]:
+    h = hashlib.sha256(text.encode()).digest()
+    return [b / 255.0 for b in h[:16]]
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+@app.get("/readyz")
+async def readyz():
+    return {"status": "ok"}
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/api/v1/annotations", response_model=Annotation, status_code=201)
+async def submit_annotation(req: SubmitAnnotationRequest) -> Annotation:
+    ann_id = str(uuid.uuid4())
+    embedding = _simple_embedding(req.question + req.corrected_answer)
+    ann = Annotation(
+        id=ann_id,
+        question=req.question,
+        original=req.original_answer,
+        corrected=req.corrected_answer,
+        agent_id=req.agent_id,
+        user_id=req.user_id,
+        embedding=embedding,
+        topic=req.topic,
+    )
+    with _store_lock:
+        _annotations[ann_id] = ann
+    return ann
+
+
+@app.get("/api/v1/annotations")
+async def list_annotations(agent: str | None = None, topic: str | None = None) -> dict[str, Any]:
+    with _store_lock:
+        items = list(_annotations.values())
+    if agent:
+        items = [a for a in items if a.agent_id == agent]
+    if topic:
+        items = [a for a in items if a.topic == topic]
+    return {"annotations": items, "total": len(items)}
+
+
+@app.post("/api/v1/annotations/search")
+async def search_annotations(req: SearchRequest) -> dict[str, Any]:
+    query_emb = _simple_embedding(req.query)
+    matches = []
+    with _store_lock:
+        for ann in _annotations.values():
+            sim = _cosine_similarity(query_emb, ann.embedding)
+            if sim >= req.similarity_threshold:
+                matches.append({"annotation": ann, "similarity": round(sim, 4)})
+    matches.sort(key=lambda m: m["similarity"], reverse=True)
+    return {"matches": matches, "total": len(matches)}
+
+
+@app.get("/api/v1/annotations/stats")
+async def annotation_stats() -> dict[str, Any]:
+    with _store_lock:
+        total = len(_annotations)
+        by_agent: dict[str, int] = defaultdict(int)
+        by_topic: dict[str, int] = defaultdict(int)
+        for ann in _annotations.values():
+            by_agent[ann.agent_id] += 1
+            by_topic[ann.topic] += 1
+
+        candidates: list[CrystallizationCandidate] = []
+        topic_agent_counts: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for ann in _annotations.values():
+            topic_agent_counts[(ann.topic, ann.agent_id)].append(ann.question)
+
+        for (topic, agent_id), questions in topic_agent_counts.items():
+            count = len(questions)
+            candidates.append(CrystallizationCandidate(
+                topic=topic,
+                agent_id=agent_id,
+                correction_count=count,
+                sample_questions=questions[:3],
+                ready=count >= _CRYSTALLIZATION_THRESHOLD,
+            ))
+
+    return {
+        "total": total,
+        "by_agent": dict(by_agent),
+        "by_topic": dict(by_topic),
+        "crystallization_candidates": [c for c in candidates if c.ready],
+    }
+
+
+@app.post("/api/v1/annotations/crystallize")
+async def crystallize(req: CrystallizeRequest) -> dict[str, Any]:
+    with _store_lock:
+        grouped: dict[tuple[str, str], list[Annotation]] = defaultdict(list)
+        for ann in _annotations.values():
+            if req.agent_id and ann.agent_id != req.agent_id:
+                continue
+            if req.topic and ann.topic != req.topic:
+                continue
+            grouped[(ann.topic, ann.agent_id)].append(ann)
+
+        crystallized = []
+        for (topic, agent_id), anns in grouped.items():
+            if len(anns) < req.min_corrections:
+                continue
+            skill_name = f"crystallized-{topic}-{agent_id}".replace(" ", "-").lower()
+            crystallized.append({
+                "skill_name": skill_name,
+                "topic": topic,
+                "agent_id": agent_id,
+                "corrections_used": len(anns),
+                "status": "created",
+                "examples": [{"question": a.question, "answer": a.corrected} for a in anns[:5]],
+            })
+
+    if not crystallized:
+        raise HTTPException(status_code=404, detail="no candidates meet crystallization threshold")
+    return {"crystallized_skills": crystallized, "total": len(crystallized)}

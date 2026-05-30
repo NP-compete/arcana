@@ -6,6 +6,19 @@ use (
 	./cmd/mesh
 	./cmd/api
 	./cmd/agui
+	./cmd/blueprint
+	./cmd/oracle
+	./cmd/codex-router
+	./cmd/codex-searcher
+	./cmd/codex-ingestor
+	./cmd/codex-scorer
+	./cmd/tools
+	./cmd/sandbox
+	./cmd/audit
+	./cmd/scheduler
+	./cmd/registry
+	./cmd/finops
+	./cmd/gitops
 	./pkg/common
 	./pkg/crds
 	./pkg/agui

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: arcana-models
+description: Arcana model registry and serving
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
