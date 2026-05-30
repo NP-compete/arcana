@@ -63,7 +63,11 @@ Create the name of the service account to use
 Image reference
 */}}
 {{- define "arcana-skills.image" -}}
-{{- $registry := .Values.image.registry | default "localhost:5001" -}}
+{{- $repo := .Values.image.repository | default "arcana-skills" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
-{{- printf "%s/arcana-skills:%s" $registry $tag -}}
+{{- if .Values.image.registry -}}
+{{- printf "%s/%s:%s" .Values.image.registry $repo $tag -}}
+{{- else -}}
+{{- printf "%s:%s" $repo $tag -}}
+{{- end -}}
 {{- end }}

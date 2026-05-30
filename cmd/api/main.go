@@ -27,6 +27,13 @@ type SystemHealth struct {
 
 var startTime = time.Now()
 
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func checkTCP(host string, port int, timeout time.Duration) (bool, time.Duration) {
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), timeout)
@@ -44,11 +51,11 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 		host string
 		port int
 	}{
-		{"PostgreSQL", "localhost", 5432},
-		{"Redis", "localhost", 6379},
-		{"Temporal", "localhost", 7233},
-		{"MinIO", "localhost", 9000},
-		{"NATS", "localhost", 4222},
+		{"PostgreSQL", envOr("POSTGRES_HOST", "localhost"), 5432},
+		{"Redis", envOr("REDIS_HOST", "localhost"), 6379},
+		{"Temporal", envOr("TEMPORAL_HOST", "localhost"), 7233},
+		{"MinIO", envOr("MINIO_HOST", "localhost"), 9000},
+		{"NATS", envOr("NATS_HOST", "localhost"), 4222},
 	}
 
 	results := make([]ServiceHealth, len(services))
@@ -86,12 +93,14 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+	port := envOr("PORT", "8080")
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+
+	http.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})

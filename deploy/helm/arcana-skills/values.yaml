@@ -1,8 +1,9 @@
 replicaCount: 1
 
 image:
-  registry: localhost:5001
-  tag: "0.1.0"
+  registry: ""
+  repository: arcana-skills
+  tag: dev
   pullPolicy: IfNotPresent
 
 nameOverride: ""
@@ -18,12 +19,8 @@ service:
 
 env:
   PORT: "8085"
-  POSTGRES_HOST: "postgres"
-  POSTGRES_PORT: "5432"
-  POSTGRES_USER: "arcana"
-  POSTGRES_DB: "arcana"
-  REDIS_URL: "redis://redis:6379"
-
+  POSTGRES_HOST: "postgres.arcana.svc.cluster.local"
+  REDIS_HOST: "redis.arcana.svc.cluster.local"
 
 probes:
   liveness: "/healthz"
@@ -31,8 +28,8 @@ probes:
 
 resources:
   requests:
-    memory: 128Mi
-    cpu: 100m
+    memory: 64Mi
+    cpu: 50m
   limits:
-    memory: 256Mi
-    cpu: 500m
+    memory: 128Mi
+    cpu: 250m
