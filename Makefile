@@ -40,12 +40,10 @@ help: ## Show this help
 # Full Stack (Kind-only, no Compose)
 # ──────────────────────────────────────────────
 
-dev: kind-up crds-install build ## Start Kind cluster, install CRDs, build binaries locally
-
-deploy: docker-build kind-load ingress-install backing-deploy helm-deploy ## Build images → load into Kind → deploy everything
+dev: kind-up ingress-install crds-install docker-build kind-load backing-deploy helm-deploy ## One command: Kind + build + deploy everything
 	@echo ""
 	@echo "╔══════════════════════════════════════════════════╗"
-	@echo "║        Arcana Platform Deployed to Kind          ║"
+	@echo "║        Arcana Platform Running on Kind           ║"
 	@echo "╠══════════════════════════════════════════════════╣"
 	@echo "║  Cluster:     $(CLUSTER_NAME)                    ║"
 	@echo "║  Namespace:   $(NAMESPACE)                       ║"
