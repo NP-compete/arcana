@@ -1,6 +1,6 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /src
-COPY cmd/finops/go.mod ./
+COPY cmd/finops/go.mod cmd/finops/go.sum ./
 RUN go mod download
 COPY cmd/finops/ ./
 RUN CGO_ENABLED=0 go build -o /arcana-finops .

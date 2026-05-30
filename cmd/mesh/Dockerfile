@@ -1,6 +1,6 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /src
-COPY cmd/mesh/go.mod ./
+COPY cmd/mesh/go.mod cmd/mesh/go.sum ./
 RUN go mod download
 COPY cmd/mesh/ ./
 RUN CGO_ENABLED=0 go build -o /arcana-mesh .

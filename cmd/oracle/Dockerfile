@@ -1,6 +1,6 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /src
-COPY cmd/oracle/go.mod ./
+COPY cmd/oracle/go.mod cmd/oracle/go.sum ./
 RUN go mod download
 COPY cmd/oracle/ ./
 RUN CGO_ENABLED=0 go build -o /arcana-oracle .
