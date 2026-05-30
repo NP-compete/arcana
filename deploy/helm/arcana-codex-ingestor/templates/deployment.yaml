@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-codex-ingestor.fullname" . }}}
+  name: {{ include "arcana-codex-ingestor.fullname" . }}
   labels:
     {{- include "arcana-codex-ingestor.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-codex-ingestor.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-codex-ingestor.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-codex-ingestor.serviceAccountName" . }}
       containers:
         - name: ingestor
-          image: {{{ include "arcana-codex-ingestor.image" . }}}
+          image: {{ include "arcana-codex-ingestor.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

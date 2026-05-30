@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-sandbox.fullname" . }}}
+  name: {{ include "arcana-sandbox.fullname" . }}
   labels:
     {{- include "arcana-sandbox.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-sandbox.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-sandbox.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-sandbox.serviceAccountName" . }}
       containers:
         - name: sandbox
-          image: {{{ include "arcana-sandbox.image" . }}}
+          image: {{ include "arcana-sandbox.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

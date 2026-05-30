@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{{ include "arcana-codex-scorer.fullname" . }}}
+  name: {{ include "arcana-codex-scorer.fullname" . }}
   labels:
     {{- include "arcana-codex-scorer.labels" . | nindent 4 }}
 spec:
@@ -14,10 +14,10 @@ spec:
       labels:
         {{- include "arcana-codex-scorer.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{{ include "arcana-codex-scorer.serviceAccountName" . }}}
+      serviceAccountName: {{ include "arcana-codex-scorer.serviceAccountName" . }}
       containers:
         - name: scorer
-          image: {{{ include "arcana-codex-scorer.image" . }}}
+          image: {{ include "arcana-codex-scorer.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
