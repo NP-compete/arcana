@@ -18,13 +18,11 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:latest
+          image: minio/minio:RELEASE.2024-06-13T22-53-53Z
           args: ["server", "/data", "--console-address", ":9001"]
-          env:
-            - name: MINIO_ROOT_USER
-              value: arcana
-            - name: MINIO_ROOT_PASSWORD
-              value: arcana-dev
+          envFrom:
+            - secretRef:
+                name: minio-secret
           ports:
             - containerPort: 9000
               name: api
@@ -48,7 +46,30 @@ spec:
               mountPath: /data
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: arcana
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-secret
+  namespace: arcana
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: arcana
+  MINIO_ROOT_PASSWORD: arcana-dev
 ---
 apiVersion: v1
 kind: Service

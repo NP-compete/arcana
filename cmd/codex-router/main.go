@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"net/http"
 	"os"
+
+	"github.com/NP-compete/arcana/pkg/server"
 )
 
 func envOr(key, fallback string) string {
@@ -15,28 +15,19 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	port := envOr("PORT", "8090")
+	httpSrv := server.New(server.Config{
+		ServiceName: "codex-router",
+		Port:        "8090",
+	})
 
 	srv := &Server{
 		profiles: NewProfileStore(),
 		shards:   NewShardRegistry(),
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/api/v1/search", srv.handleSearch)
-	mux.HandleFunc("/api/v1/profiles", srv.handleProfiles)
-	mux.HandleFunc("/api/v1/shards", srv.handleShards)
+	httpSrv.Handle("/api/v1/search", corsMiddleware(http.HandlerFunc(srv.handleSearch)))
+	httpSrv.Handle("/api/v1/profiles", corsMiddleware(http.HandlerFunc(srv.handleProfiles)))
+	httpSrv.Handle("/api/v1/shards", corsMiddleware(http.HandlerFunc(srv.handleShards)))
 
-	log.Printf("codex-router starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, corsMiddleware(mux)))
+	httpSrv.ListenAndServe()
 }

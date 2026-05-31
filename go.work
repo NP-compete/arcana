@@ -1,30 +1,34 @@
-go 1.23
+go 1.25.0
 
 use (
-	./cmd/engine
-	./cmd/operator
-	./cmd/mesh
-	./cmd/api
 	./cmd/agui
-	./cmd/blueprint
-	./cmd/oracle
-	./cmd/codex-router
-	./cmd/codex-searcher
-	./cmd/codex-ingestor
-	./cmd/codex-scorer
-	./cmd/tools
-	./cmd/sandbox
+	./cmd/api
 	./cmd/audit
-	./cmd/scheduler
-	./cmd/registry
+	./cmd/blueprint
+	./cmd/cli
+	./cmd/codex-ingestor
+	./cmd/codex-router
+	./cmd/codex-scorer
+	./cmd/codex-searcher
+	./cmd/engine
 	./cmd/finops
 	./cmd/gitops
-	./pkg/common
-	./pkg/crds
-	./pkg/agui
+	./cmd/mesh
+	./cmd/operator
+	./cmd/oracle
+	./cmd/registry
+	./cmd/sandbox
+	./cmd/scheduler
+	./cmd/tools
 	./pkg/a2a
 	./pkg/acp
+	./pkg/agui
+	./pkg/common
+	./pkg/crds
+	./pkg/db
+	./pkg/server
 	./pkg/mcp
 	./pkg/temporal
 	./pkg/ward
+	./pkg/tracing
 )

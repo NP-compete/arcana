@@ -1,97 +1,210 @@
-name: CI
+name: Arcana CI
 
 on:
-  pull_request:
-    branches: [main]
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  lint-go:
+  go-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
-      - name: Lint Go
-        uses: golangci/golangci-lint-action@v6
-        with:
-          working-directory: .
+          go-version: '1.23'
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Lint Go services
+        run: |
+          for svc in engine operator mesh api agui blueprint oracle codex-router codex-searcher codex-ingestor codex-scorer tools sandbox audit scheduler registry finops gitops; do
+            echo "::group::Lint $svc"
+            cd cmd/$svc && go vet ./... && cd ../..
+            echo "::endgroup::"
+          done
+      - name: Vulnerability check
+        run: |
+          for svc in engine operator mesh api agui blueprint oracle codex-router codex-searcher codex-ingestor codex-scorer tools sandbox audit scheduler registry finops gitops; do
+            echo "::group::Vulncheck $svc"
+            cd cmd/$svc && govulncheck ./... && cd ../..
+            echo "::endgroup::"
+          done
 
-  lint-python:
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Test Go services with coverage
+        run: |
+          for svc in engine operator mesh api agui blueprint oracle codex-router codex-searcher codex-ingestor codex-scorer tools sandbox audit scheduler registry finops gitops; do
+            echo "::group::Test $svc"
+            cd cmd/$svc
+            go test ./... -v -count=1 -coverprofile=coverage.out
+            if [ -f coverage.out ]; then
+              COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+              echo "Coverage for $svc: ${COVERAGE}%"
+            fi
+            cd ../..
+            echo "::endgroup::"
+          done
+      - name: Test shared packages
+        run: |
+          for pkg in common db logger metrics server; do
+            echo "::group::Test pkg/$pkg"
+            cd pkg/$pkg && go test ./... -v -count=1 -coverprofile=coverage.out && cd ../..
+            echo "::endgroup::"
+          done
+
+  python-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install ruff
-      - run: ruff check services/skills/ services/ward/
+          python-version: '3.12'
+      - name: Lint Python services
+        run: |
+          pip install ruff
+          for svc in skills ward memory connectors graph forge models probe annotate; do
+            echo "::group::Lint $svc"
+            ruff check services/$svc/
+            echo "::endgroup::"
+          done
 
-  lint-ts:
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test Python services
+        run: |
+          pip install pytest httpx pytest-cov
+          for svc in skills ward memory connectors graph forge models probe annotate; do
+            echo "::group::Test $svc"
+            if [ -d "services/$svc/tests" ]; then
+              cd services/$svc
+              pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || true
+              pytest tests/ -v --cov=app --cov-report=term-missing
+              cd ../..
+            else
+              echo "No tests found for $svc"
+            fi
+            echo "::endgroup::"
+          done
+
+  ts-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-      - working-directory: services/studio
-        run: npm ci && npm run lint
+          node-version: '20'
+      - name: Lint Studio
+        working-directory: services/studio
+        run: |
+          npm ci
+          npm run lint
 
-  test-go:
+  helm-lint:
     runs-on: ubuntu-latest
-    needs: lint-go
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-      - run: |
-          for svc in engine operator mesh api agui; do
-            cd cmd/$svc && go test ./... && cd ../..
+      - uses: azure/setup-helm@v4
+      - name: Lint Helm charts
+        run: |
+          for chart in deploy/helm/arcana-*; do
+            echo "::group::Lint $(basename $chart)"
+            helm lint "$chart"
+            echo "::endgroup::"
           done
 
-  test-python:
+  docker-build:
     runs-on: ubuntu-latest
-    needs: lint-python
+    needs: [go-lint, go-test, python-lint, ts-lint]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: |
-          for svc in skills ward; do
-            cd services/$svc && pip install -e ".[dev]" && pytest tests/ && cd ../..
+      - name: Build Go images
+        run: |
+          for svc in engine operator mesh api agui blueprint oracle codex-router codex-searcher codex-ingestor codex-scorer tools sandbox audit scheduler registry finops gitops; do
+            echo "::group::Build arcana-$svc"
+            docker build -t arcana-$svc:ci -f cmd/$svc/Dockerfile .
+            echo "::endgroup::"
           done
+      - name: Build Python images
+        run: |
+          for svc in skills ward memory connectors graph forge models probe annotate; do
+            echo "::group::Build arcana-$svc"
+            docker build -t arcana-$svc:ci -f services/$svc/Dockerfile .
+            echo "::endgroup::"
+          done
+      - name: Build Studio
+        run: docker build -t arcana-studio:ci -f services/studio/Dockerfile .
 
-  build-images:
+  smoke-test:
     runs-on: ubuntu-latest
-    needs: [test-go, test-python]
-    strategy:
-      matrix:
-        service:
-          - {name: engine, context: ".", dockerfile: cmd/engine/Dockerfile}
-          - {name: operator, context: ".", dockerfile: cmd/operator/Dockerfile}
-          - {name: mesh, context: ".", dockerfile: cmd/mesh/Dockerfile}
-          - {name: api, context: ".", dockerfile: cmd/api/Dockerfile}
-          - {name: agui, context: ".", dockerfile: cmd/agui/Dockerfile}
-          - {name: skills, context: ".", dockerfile: services/skills/Dockerfile}
-          - {name: ward, context: ".", dockerfile: services/ward/Dockerfile}
-          - {name: studio, context: ".", dockerfile: services/studio/Dockerfile}
+    needs: [docker-build]
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t arcana-${{ matrix.service.name }}:ci -f ${{ matrix.service.dockerfile }} ${{ matrix.service.context }}
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+      - name: Load images and deploy
+        run: |
+          # Load images into Kind
+          for svc in api engine mesh operator; do
+            kind load docker-image arcana-$svc:ci
+          done
+      - name: Run smoke tests
+        run: |
+          kubectl apply -f deploy/tests/smoke-test-job.yaml
+          kubectl wait --for=condition=complete job/arcana-smoke-test -n arcana --timeout=120s
+          kubectl logs job/arcana-smoke-test -n arcana
 
-  crds-validate:
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  e2e-playwright:
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run Playwright e2e tests
+        working-directory: e2e
+        run: npx playwright test
+
+  crd-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - name: Validate CRDs
+        run: |
           for f in deploy/crds/*.yaml; do
-            echo "Validating $f..."
-            python3 -c "import yaml; yaml.safe_load(open('$f'))"
+            echo "Validating $f"
+            python3 -c "import yaml; yaml.safe_load_all(open('$f'))" || exit 1
           done

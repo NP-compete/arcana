@@ -26,6 +26,7 @@ import {
 } from "@patternfly/react-core";
 import { Table, Thead, Tr, Th, Tbody, Td } from "@patternfly/react-table";
 import { CubesIcon, PlusCircleIcon } from "@patternfly/react-icons";
+import { ShareBadge } from "../components/ShareBadge";
 
 interface CatalogEntry {
   name: string;
@@ -193,6 +194,7 @@ export const SkillsPage = () => {
                   <Th>Name</Th>
                   <Th>Tier</Th>
                   <Th>Version</Th>
+                  <Th>Sharing</Th>
                   <Th>Description</Th>
                 </Tr>
               </Thead>
@@ -209,6 +211,9 @@ export const SkillsPage = () => {
                         </Label>
                       </Td>
                       <Td dataLabel="Version">{skill.version}</Td>
+                      <Td dataLabel="Sharing">
+                        <ShareBadge assetType="skill" assetName={skill.name} compact />
+                      </Td>
                       <Td dataLabel="Description">{skill.description}</Td>
                     </Tr>
                   );

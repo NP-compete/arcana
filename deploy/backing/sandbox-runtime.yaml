@@ -1,0 +1,65 @@
+# RuntimeClass for sandboxed code execution
+# Requires gVisor (runsc) to be installed on cluster nodes
+# For Kind/dev: falls back to standard runc with restricted security context
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: arcana-sandbox
+handler: runsc
+scheduling:
+  nodeSelector:
+    sandbox.arcana.io/enabled: "true"
+---
+# Fallback RuntimeClass for dev environments without gVisor
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: arcana-sandbox-dev
+handler: runc
+---
+# ResourceQuota for sandbox namespace to prevent resource exhaustion
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota
+  namespace: arcana
+spec:
+  hard:
+    pods: "50"
+    requests.cpu: "10"
+    requests.memory: 4Gi
+    limits.cpu: "20"
+    limits.memory: 8Gi
+---
+# LimitRange to cap individual sandbox pods
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sandbox-limits
+  namespace: arcana
+spec:
+  limits:
+    - type: Container
+      max:
+        cpu: 500m
+        memory: 256Mi
+      default:
+        cpu: 100m
+        memory: 64Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 32Mi
+---
+# NetworkPolicy to isolate sandbox pods (no network access)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-deny-all
+  namespace: arcana
+spec:
+  podSelector:
+    matchLabels:
+      arcana.io/sandbox: "true"
+  policyTypes:
+    - Ingress
+    - Egress

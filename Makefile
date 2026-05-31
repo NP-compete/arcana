@@ -19,16 +19,18 @@ NAMESPACE       := arcana
 GO_SERVICES     := engine operator mesh api agui blueprint oracle \
                    codex-router codex-searcher codex-ingestor codex-scorer \
                    tools sandbox audit scheduler registry finops gitops
+GO_CLI          := cli
 PYTHON_SERVICES := skills ward memory connectors graph forge models probe annotate
 TS_SERVICES     := studio
 ALL_IMAGES      := $(addprefix arcana-,$(GO_SERVICES) $(PYTHON_SERVICES) $(TS_SERVICES))
 
 TAG             ?= dev
 
-CONTAINER_RT    := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
+CONTAINER_RT    := $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 CONTAINER_CMD   := $(notdir $(CONTAINER_RT))
 
 export KUBECONFIG
+export KIND_EXPERIMENTAL_PROVIDER=podman
 
 # ──────────────────────────────────────────────
 # Help
@@ -44,22 +46,24 @@ help: ## Show this help
 
 dev: kind-up ingress-install crds-install docker-build kind-load backing-deploy helm-deploy ## One command: Kind + build + deploy everything
 	@echo ""
-	@echo "╔══════════════════════════════════════════════════╗"
-	@echo "║        Arcana Platform Running on Kind           ║"
-	@echo "╠══════════════════════════════════════════════════╣"
-	@echo "║  Cluster:     $(CLUSTER_NAME)                    ║"
-	@echo "║  Namespace:   $(NAMESPACE)                       ║"
-	@echo "║  KUBECONFIG:  $(KUBECONFIG)                      ║"
-	@echo "║                                                  ║"
-	@echo "║  Studio UI:   http://localhost:8080               ║"
-	@echo "║  API:         http://localhost:8080/api/v1/health ║"
-	@echo "║  AG-UI:       http://localhost:8080/events        ║"
-	@echo "╚══════════════════════════════════════════════════╝"
+	@echo "╔════════════════════════════════════════════════════════════╗"
+	@echo "║             Arcana Platform Running on Kind                ║"
+	@echo "╠════════════════════════════════════════════════════════════╣"
+	@echo "║  Cluster:     $(CLUSTER_NAME)                              ║"
+	@echo "║  Namespace:   $(NAMESPACE)                                 ║"
+	@echo "║  KUBECONFIG:  $(KUBECONFIG)                                ║"
+	@echo "║                                                            ║"
+	@echo "║  Studio UI:   http://arcana.localhost.me:8080                ║"
+	@echo "║  API:         http://arcana.localhost.me:8080/api/v1/health║"
+	@echo "║  AG-UI:       http://arcana.localhost.me:8080/events       ║"
+	@echo "╚════════════════════════════════════════════════════════════╝"
 	@echo ""
 	@echo "Run 'make dev-status' to check pod health."
 
 dev-down: kind-down ## Tear down entire dev environment
 	@echo "Dev environment destroyed."
+
+dev-clean: dev-down clean dev ## Destroy, clean, and rebuild everything from scratch
 
 dev-status: ## Check status of all dev services
 	@echo "=== Kind Cluster ==="
@@ -113,21 +117,33 @@ docker-build: ## Build all container images
 	@for svc in $(GO_SERVICES); do \
 	  echo "  → arcana-$$svc"; \
 	  $(CONTAINER_CMD) build -t arcana-$$svc:$(TAG) -f cmd/$$svc/Dockerfile . || exit 1; \
+	  if [ "$(CONTAINER_CMD)" = "podman" ]; then $(CONTAINER_CMD) tag localhost/arcana-$$svc:$(TAG) arcana-$$svc:$(TAG) 2>/dev/null || true; fi; \
 	done
 	@for svc in $(PYTHON_SERVICES); do \
 	  echo "  → arcana-$$svc"; \
 	  $(CONTAINER_CMD) build -t arcana-$$svc:$(TAG) -f services/$$svc/Dockerfile . || exit 1; \
+	  if [ "$(CONTAINER_CMD)" = "podman" ]; then $(CONTAINER_CMD) tag localhost/arcana-$$svc:$(TAG) arcana-$$svc:$(TAG) 2>/dev/null || true; fi; \
 	done
 	@echo "  → arcana-studio"
 	@$(CONTAINER_CMD) build -t arcana-studio:$(TAG) -f services/studio/Dockerfile . || exit 1
+	@if [ "$(CONTAINER_CMD)" = "podman" ]; then $(CONTAINER_CMD) tag localhost/arcana-studio:$(TAG) arcana-studio:$(TAG) 2>/dev/null || true; fi
 	@echo "All images built."
 
 kind-load: ## Load images into Kind cluster
 	@echo "Loading images into Kind cluster '$(CLUSTER_NAME)'..."
-	@for img in $(ALL_IMAGES); do \
-	  echo "  → $$img:$(TAG)"; \
-	  kind load docker-image $$img:$(TAG) --name $(CLUSTER_NAME) || exit 1; \
-	done
+	@if [ "$(CONTAINER_CMD)" = "podman" ]; then \
+	  for img in $(ALL_IMAGES); do \
+	    echo "  → $$img:$(TAG)"; \
+	    $(CONTAINER_CMD) save localhost/$$img:$(TAG) -o /tmp/$$img.tar \
+	      && kind load image-archive /tmp/$$img.tar --name $(CLUSTER_NAME) \
+	      && rm -f /tmp/$$img.tar || exit 1; \
+	  done; \
+	else \
+	  for img in $(ALL_IMAGES); do \
+	    echo "  → $$img:$(TAG)"; \
+	    kind load docker-image $$img:$(TAG) --name $(CLUSTER_NAME) || exit 1; \
+	  done; \
+	fi
 	@echo "All images loaded."
 
 # ──────────────────────────────────────────────
@@ -135,21 +151,25 @@ kind-load: ## Load images into Kind cluster
 # ──────────────────────────────────────────────
 
 ingress-install: ## Install Nginx Ingress Controller into Kind
+	@echo "Waiting for Kubernetes API server to be ready..."
+	@for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break || sleep 2; done
 	@echo "Installing Nginx Ingress Controller..."
-	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/kind/deploy.yaml
+	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/kind/deploy.yaml --validate=false
 	@echo "Waiting for ingress controller to be ready..."
 	@kubectl wait --namespace ingress-nginx \
 	  --for=condition=ready pod \
 	  --selector=app.kubernetes.io/component=controller \
-	  --timeout=120s 2>/dev/null || echo "Warning: ingress controller not ready yet, continuing..."
+	  --timeout=180s 2>/dev/null || echo "Warning: ingress controller not ready yet, continuing..."
 
 # ──────────────────────────────────────────────
 # Backing Services (K8s)
 # ──────────────────────────────────────────────
 
-backing-deploy: ## Deploy backing services (PostgreSQL, Redis, Temporal, MinIO, NATS) to Kind
+backing-deploy: ## Deploy backing services (PostgreSQL, Redis, Temporal, MinIO, NATS, monitoring, policies) to Kind
 	@echo "Deploying backing services to namespace '$(NAMESPACE)'..."
 	@kubectl apply -f deploy/backing/namespace.yaml
+	@kubectl apply -f deploy/backing/secrets.yaml
+	@kubectl apply -f deploy/backing/external-db.yaml
 	@kubectl apply -f deploy/backing/postgres.yaml
 	@kubectl apply -f deploy/backing/redis.yaml
 	@kubectl apply -f deploy/backing/nats.yaml
@@ -159,6 +179,16 @@ backing-deploy: ## Deploy backing services (PostgreSQL, Redis, Temporal, MinIO, 
 	@kubectl wait -n $(NAMESPACE) --for=condition=ready pod -l app.kubernetes.io/name=redis --timeout=60s 2>/dev/null || true
 	@echo "Deploying Temporal (depends on PostgreSQL)..."
 	@kubectl apply -f deploy/backing/temporal.yaml
+	@echo "Deploying monitoring and observability..."
+	@kubectl apply -f deploy/backing/monitoring.yaml 2>/dev/null || true
+	@kubectl apply -f deploy/backing/alerting-rules.yaml 2>/dev/null || true
+	@kubectl apply -f deploy/backing/alertmanager.yaml 2>/dev/null || true
+	@kubectl apply -f deploy/backing/jaeger.yaml 2>/dev/null || true
+	@echo "Deploying network policies..."
+	@kubectl apply -f deploy/backing/network-policies.yaml 2>/dev/null || true
+	@kubectl apply -f deploy/backing/egress-policies.yaml 2>/dev/null || true
+	@echo "Deploying sandbox runtime..."
+	@kubectl apply -f deploy/backing/sandbox-runtime.yaml 2>/dev/null || true
 	@echo "Backing services deployed."
 
 # ──────────────────────────────────────────────
@@ -190,7 +220,7 @@ helm-uninstall: ## Uninstall all Arcana Helm releases
 # Build (local binaries, for dev without K8s)
 # ──────────────────────────────────────────────
 
-build: build-go build-python build-studio ## Build all services locally
+build: build-go build-cli build-python build-studio ## Build all services locally
 
 build-go: ## Build Go services
 	@echo "Building Go services..."
@@ -200,6 +230,12 @@ build-go: ## Build Go services
 	  (cd cmd/$$svc && go build -o ../../bin/arcana-$$svc .) || exit 1; \
 	done
 	@echo "Go services built → bin/"
+
+build-cli: ## Build Arcana CLI
+	@echo "Building CLI..."
+	@mkdir -p bin
+	@(cd cmd/cli && go build -o ../../bin/arcana .) || exit 1
+	@echo "CLI built → bin/arcana"
 
 build-python: ## Build Python services (install deps in venvs)
 	@echo "Building Python services..."

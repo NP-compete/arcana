@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: arcana-mesh-agent-manager
+  labels:
+    {{- include "arcana-mesh.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "resourcequotas", "secrets", "services"]
+    verbs: ["create", "get", "list", "watch", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "watch", "update"]
+  - apiGroups: ["arcana.io"]
+    resources: ["arcanaagents"]
+    verbs: ["create", "get", "list", "watch", "update", "patch"]
+  - apiGroups: ["arcana.io"]
+    resources: ["arcanaagents/status"]
+    verbs: ["get", "update", "patch"]

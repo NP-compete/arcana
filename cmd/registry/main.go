@@ -1,46 +1,49 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"net/http"
-	"os"
+
+	"github.com/NP-compete/arcana/pkg/db"
+	"github.com/NP-compete/arcana/pkg/server"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8104"
-	}
+	dbConn := db.MustConnect()
 
-	store := NewRegistryStore()
+	httpSrv := server.New(server.Config{
+		ServiceName: "registry",
+		Port:        "8104",
+		DB:          dbConn,
+	})
+
+	store := NewRegistryStore(dbConn)
 	srv := NewServer(store)
 
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-
-	http.HandleFunc("/api/v1/catalog/agents", srv.corsMiddleware(srv.handleCatalogAgents))
-	http.HandleFunc("/api/v1/catalog/skills", srv.corsMiddleware(srv.handleCatalogSkills))
-	http.HandleFunc("/api/v1/catalog/tools", srv.corsMiddleware(srv.handleCatalogTools))
-	http.HandleFunc("/api/v1/catalog/models", srv.corsMiddleware(srv.handleCatalogModels))
-	http.HandleFunc("/api/v1/catalog/stats", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	httpSrv.HandleFunc("/api/v1/catalog/agents", srv.corsMiddleware(srv.handleCatalogAgents))
+	httpSrv.HandleFunc("/api/v1/catalog/skills", srv.corsMiddleware(srv.handleCatalogSkills))
+	httpSrv.HandleFunc("/api/v1/catalog/tools", srv.corsMiddleware(srv.handleCatalogTools))
+	httpSrv.HandleFunc("/api/v1/catalog/models", srv.corsMiddleware(srv.handleCatalogModels))
+	httpSrv.HandleFunc("/api/v1/catalog/stats", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		writeJSON(w, http.StatusOK, store.Stats())
 	}))
-	http.HandleFunc("/api/v1/catalog/", srv.corsMiddleware(srv.handleCatalogRoute))
+	httpSrv.HandleFunc("/api/v1/catalog/search", srv.corsMiddleware(srv.handleCatalogSearch))
+	httpSrv.HandleFunc("/api/v1/catalog/versions/", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			srv.handleVersions(w, r)
+		case http.MethodPost:
+			srv.handleSubmitVersion(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
+	httpSrv.HandleFunc("/api/v1/approvals", srv.corsMiddleware(srv.handleApprovals))
+	httpSrv.HandleFunc("/api/v1/approvals/", srv.corsMiddleware(srv.handleApprovalAction))
+	httpSrv.HandleFunc("/api/v1/catalog/", srv.corsMiddleware(srv.handleCatalogRoute))
 
-	log.Printf("arcana-registry starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	httpSrv.ListenAndServe()
 }

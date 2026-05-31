@@ -1,36 +1,31 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"net/http"
-	"os"
 	"strings"
+
+	"github.com/NP-compete/arcana/pkg/db"
+	"github.com/NP-compete/arcana/pkg/server"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8081"
-	}
+	dbConn := db.MustConnect()
 
-	store := NewTaskStore()
+	httpSrv := server.New(server.Config{
+		ServiceName: "engine",
+		Port:        "8081",
+		DB:          dbConn,
+	})
+
+	store := NewTaskStore(dbConn)
 	react := NewReActEngine(store)
 	srv := NewServer(store, react)
 
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
+	// Start Temporal worker in the background. Falls back to in-memory
+	// execution if Temporal is unreachable.
+	startWorker(store, react)
 
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-
-	http.HandleFunc("/api/v1/tasks", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	httpSrv.HandleFunc("/api/v1/tasks", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			srv.handleSubmitTask(w, r)
@@ -41,7 +36,9 @@ func main() {
 		}
 	}))
 
-	http.HandleFunc("/api/v1/tasks/", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	httpSrv.HandleFunc("/api/v1/tasks/stages/", srv.corsMiddleware(srv.handleTaskStages))
+
+	httpSrv.HandleFunc("/api/v1/tasks/", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if strings.HasSuffix(path, "/cancel") {
 			srv.handleCancelTask(w, r)
@@ -50,6 +47,5 @@ func main() {
 		srv.handleGetTask(w, r)
 	}))
 
-	log.Printf("arcana-engine starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	httpSrv.ListenAndServe()
 }

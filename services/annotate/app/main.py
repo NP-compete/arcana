@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import os
 import hashlib
+import logging
 import threading
+import time
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+import structlog
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -19,6 +23,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+)
+log = structlog.get_logger(service="annotate")
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+resource = Resource.create({SERVICE_NAME: "arcana-annotate"})
+provider = TracerProvider(resource=resource)
+endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
+trace.set_tracer_provider(provider)
+FastAPIInstrumentor.instrument_app(app)
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = (time.monotonic() - start) * 1000
+    log.info(
+        "request",
+        method=request.method,
+        path=str(request.url.path),
+        status=response.status_code,
+        duration_ms=round(duration_ms, 2),
+    )
+    return response
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    return response
+
 
 class Annotation(BaseModel):
     id: str
@@ -29,6 +80,7 @@ class Annotation(BaseModel):
     user_id: str
     embedding: list[float] = Field(default_factory=list)
     topic: str = "general"
+    crystallized: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -137,6 +189,9 @@ async def search_annotations(req: SearchRequest) -> dict[str, Any]:
 async def annotation_stats() -> dict[str, Any]:
     with _store_lock:
         total = len(_annotations)
+        crystallized_count = sum(1 for a in _annotations.values() if getattr(a, "crystallized", False))
+        unique_topics = len({a.topic for a in _annotations.values()})
+
         by_agent: dict[str, int] = defaultdict(int)
         by_topic: dict[str, int] = defaultdict(int)
         for ann in _annotations.values():
@@ -159,7 +214,11 @@ async def annotation_stats() -> dict[str, Any]:
             ))
 
     return {
+        "total_annotations": total,
         "total": total,
+        "crystallized": crystallized_count,
+        "unique_topics": unique_topics,
+        "cache_hit_rate": 0.0,
         "by_agent": dict(by_agent),
         "by_topic": dict(by_topic),
         "crystallization_candidates": [c for c in candidates if c.ready],
@@ -190,6 +249,9 @@ async def crystallize(req: CrystallizeRequest) -> dict[str, Any]:
                 "status": "created",
                 "examples": [{"question": a.question, "answer": a.corrected} for a in anns[:5]],
             })
+            # Mark annotations as crystallized
+            for ann in anns:
+                ann.crystallized = True
 
     if not crystallized:
         raise HTTPException(status_code=404, detail="no candidates meet crystallization threshold")

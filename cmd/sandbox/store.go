@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -13,14 +15,24 @@ import (
 	"github.com/google/uuid"
 )
 
+// maxOutputBytes caps the combined stdout+stderr capture to 1MB to prevent
+// resource exhaustion from runaway processes.
+const maxOutputBytes = 1 << 20 // 1MB
+
 type SandboxStore struct {
 	mu      sync.RWMutex
 	execs   map[string]*execRecord
+	k8sExec *K8sExecutor
 }
 
 func NewSandboxStore() *SandboxStore {
+	k8sExec, err := NewK8sExecutor()
+	if err != nil {
+		log.Printf("WARNING: K8s executor unavailable, using local execution: %v", err)
+	}
 	return &SandboxStore{
-		execs: make(map[string]*execRecord),
+		execs:   make(map[string]*execRecord),
+		k8sExec: k8sExec,
 	}
 }
 
@@ -53,7 +65,13 @@ func (s *SandboxStore) Execute(req ExecRequest) *ExecResult {
 	s.mu.Unlock()
 
 	start := time.Now()
-	result, execLogs := s.runInProcess(req)
+	var result ExecResult
+	var execLogs []string
+	if s.k8sExec != nil {
+		result, execLogs = s.runInK8s(req)
+	} else {
+		result, execLogs = s.runInProcess(req)
+	}
 	duration := time.Since(start).Milliseconds()
 
 	var memStats runtime.MemStats
@@ -101,22 +119,72 @@ func (s *SandboxStore) runInProcess(req ExecRequest) (ExecResult, []string) {
 	}
 }
 
+func (s *SandboxStore) runInK8s(req ExecRequest) (ExecResult, []string) {
+	logs := []string{}
+	lang := strings.ToLower(req.Language)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
+	defer cancel()
+
+	stdout, stderr, err := s.k8sExec.Execute(ctx, lang, req.Code, req.TimeoutMs)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			logs = append(logs, fmt.Sprintf("[%s] k8s execution timed out", time.Now().UTC().Format(time.RFC3339)))
+			return ExecResult{
+				Stdout:   stdout,
+				Stderr:   "execution timed out",
+				ExitCode: 1,
+				Status:   ExecTimeout,
+			}, logs
+		}
+		logs = append(logs, fmt.Sprintf("[%s] k8s execution failed: %v", time.Now().UTC().Format(time.RFC3339), err))
+		return ExecResult{
+			Stdout:   stdout,
+			Stderr:   err.Error(),
+			ExitCode: 1,
+		}, logs
+	}
+
+	exitCode := 0
+	if stderr != "" {
+		exitCode = 1
+	}
+
+	logs = append(logs, fmt.Sprintf("[%s] k8s %s execution completed", time.Now().UTC().Format(time.RFC3339), lang))
+	return ExecResult{
+		Stdout:   stdout,
+		Stderr:   stderr,
+		ExitCode: exitCode,
+	}, logs
+}
+
 func (s *SandboxStore) runPython(req ExecRequest, logs *[]string) (ExecResult, []string) {
+	// SECURITY: Production deployments MUST use gVisor (runsc) or Kata Containers
+	// for process-level isolation. The restrictions below are defense-in-depth only
+	// and do NOT replace a proper sandbox runtime.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "python3", "-c", req.Code)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
+	tmpDir, err := os.MkdirTemp("", "sandbox-*")
+	if err == nil {
+		defer os.RemoveAll(tmpDir)
+		cmd.Dir = tmpDir
+	}
+
+	cmd.Env = SanitizeEnv()
 	if req.Inputs != nil {
 		for k, v := range req.Inputs {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("INPUT_%s=%v", strings.ToUpper(k), v))
 		}
 	}
 
-	err := cmd.Run()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
+	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
+
+	err = cmd.Run()
 	result := ExecResult{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: 0}
 	if err != nil {
 		result.ExitCode = 1
@@ -132,15 +200,27 @@ func (s *SandboxStore) runPython(req ExecRequest, logs *[]string) (ExecResult, [
 }
 
 func (s *SandboxStore) runJavaScript(req ExecRequest, logs *[]string) (ExecResult, []string) {
+	// SECURITY: Production deployments MUST use gVisor (runsc) or Kata Containers
+	// for process-level isolation. The restrictions below are defense-in-depth only
+	// and do NOT replace a proper sandbox runtime.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "node", "-e", req.Code)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	tmpDir, err := os.MkdirTemp("", "sandbox-*")
+	if err == nil {
+		defer os.RemoveAll(tmpDir)
+		cmd.Dir = tmpDir
+	}
+
+	cmd.Env = SanitizeEnv()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
+	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
+
+	err = cmd.Run()
 	result := ExecResult{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: 0}
 	if err != nil {
 		result.ExitCode = 1
@@ -154,15 +234,27 @@ func (s *SandboxStore) runJavaScript(req ExecRequest, logs *[]string) (ExecResul
 }
 
 func (s *SandboxStore) runShell(req ExecRequest, logs *[]string) (ExecResult, []string) {
+	// SECURITY: Production deployments MUST use gVisor (runsc) or Kata Containers
+	// for process-level isolation. The restrictions below are defense-in-depth only
+	// and do NOT replace a proper sandbox runtime.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", req.Code)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	tmpDir, err := os.MkdirTemp("", "sandbox-*")
+	if err == nil {
+		defer os.RemoveAll(tmpDir)
+		cmd.Dir = tmpDir
+	}
+
+	cmd.Env = SanitizeEnv()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
+	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
+
+	err = cmd.Run()
 	result := ExecResult{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: 0}
 	if err != nil {
 		result.ExitCode = 1

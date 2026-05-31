@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"net/http"
 	"os"
+
+	"github.com/NP-compete/arcana/pkg/server"
 )
 
 func envOr(key, fallback string) string {
@@ -15,26 +15,17 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	port := envOr("PORT", "8091")
+	httpSrv := server.New(server.Config{
+		ServiceName: "codex-searcher",
+		Port:        "8091",
+	})
 
 	srv := &Server{store: NewDocumentStore()}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/api/v1/search/semantic", srv.handleSemantic)
-	mux.HandleFunc("/api/v1/search/keyword", srv.handleKeyword)
-	mux.HandleFunc("/api/v1/search/entity", srv.handleEntity)
-	mux.HandleFunc("/api/v1/search/hybrid", srv.handleHybrid)
+	httpSrv.Handle("/api/v1/search/semantic", corsMiddleware(http.HandlerFunc(srv.handleSemantic)))
+	httpSrv.Handle("/api/v1/search/keyword", corsMiddleware(http.HandlerFunc(srv.handleKeyword)))
+	httpSrv.Handle("/api/v1/search/entity", corsMiddleware(http.HandlerFunc(srv.handleEntity)))
+	httpSrv.Handle("/api/v1/search/hybrid", corsMiddleware(http.HandlerFunc(srv.handleHybrid)))
 
-	log.Printf("codex-searcher starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, corsMiddleware(mux)))
+	httpSrv.ListenAndServe()
 }

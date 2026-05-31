@@ -1,0 +1,23 @@
+replicaCount: 1
+
+image:
+  tag: dev
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 128Mi
+    cpu: 250m
+
+autoscaling:
+  enabled: false
+
+pdb:
+  enabled: false
+
+env:
+  ARCANA_ENV: "development"
+  LOG_LEVEL: "debug"

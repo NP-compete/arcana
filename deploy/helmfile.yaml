@@ -1,0 +1,179 @@
+environments:
+  dev:
+    values:
+      - helm/overlays/values-dev.yaml
+  staging:
+    values:
+      - helm/overlays/values-staging.yaml
+  prod:
+    values:
+      - helm/overlays/values-prod.yaml
+
+releases:
+  - name: arcana-agui
+    chart: ./helm/arcana-agui
+    values:
+      - ./helm/arcana-agui/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-annotate
+    chart: ./helm/arcana-annotate
+    values:
+      - ./helm/arcana-annotate/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-api
+    chart: ./helm/arcana-api
+    values:
+      - ./helm/arcana-api/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-audit
+    chart: ./helm/arcana-audit
+    values:
+      - ./helm/arcana-audit/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-blueprint
+    chart: ./helm/arcana-blueprint
+    values:
+      - ./helm/arcana-blueprint/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-codex-ingestor
+    chart: ./helm/arcana-codex-ingestor
+    values:
+      - ./helm/arcana-codex-ingestor/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-codex-router
+    chart: ./helm/arcana-codex-router
+    values:
+      - ./helm/arcana-codex-router/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-codex-scorer
+    chart: ./helm/arcana-codex-scorer
+    values:
+      - ./helm/arcana-codex-scorer/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-codex-searcher
+    chart: ./helm/arcana-codex-searcher
+    values:
+      - ./helm/arcana-codex-searcher/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-connectors
+    chart: ./helm/arcana-connectors
+    values:
+      - ./helm/arcana-connectors/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-engine
+    chart: ./helm/arcana-engine
+    values:
+      - ./helm/arcana-engine/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-finops
+    chart: ./helm/arcana-finops
+    values:
+      - ./helm/arcana-finops/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-forge
+    chart: ./helm/arcana-forge
+    values:
+      - ./helm/arcana-forge/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-gitops
+    chart: ./helm/arcana-gitops
+    values:
+      - ./helm/arcana-gitops/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-graph
+    chart: ./helm/arcana-graph
+    values:
+      - ./helm/arcana-graph/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-memory
+    chart: ./helm/arcana-memory
+    values:
+      - ./helm/arcana-memory/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-mesh
+    chart: ./helm/arcana-mesh
+    values:
+      - ./helm/arcana-mesh/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-models
+    chart: ./helm/arcana-models
+    values:
+      - ./helm/arcana-models/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-operator
+    chart: ./helm/arcana-operator
+    values:
+      - ./helm/arcana-operator/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-oracle
+    chart: ./helm/arcana-oracle
+    values:
+      - ./helm/arcana-oracle/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-probe
+    chart: ./helm/arcana-probe
+    values:
+      - ./helm/arcana-probe/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-registry
+    chart: ./helm/arcana-registry
+    values:
+      - ./helm/arcana-registry/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-sandbox
+    chart: ./helm/arcana-sandbox
+    values:
+      - ./helm/arcana-sandbox/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-scheduler
+    chart: ./helm/arcana-scheduler
+    values:
+      - ./helm/arcana-scheduler/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-skills
+    chart: ./helm/arcana-skills
+    values:
+      - ./helm/arcana-skills/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-studio
+    chart: ./helm/arcana-studio
+    values:
+      - ./helm/arcana-studio/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-tools
+    chart: ./helm/arcana-tools
+    values:
+      - ./helm/arcana-tools/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml
+
+  - name: arcana-ward
+    chart: ./helm/arcana-ward
+    values:
+      - ./helm/arcana-ward/values.yaml
+      - helm/overlays/values-{{ .Environment.Name }}.yaml

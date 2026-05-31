@@ -2,7 +2,7 @@
 name = "arcana-forge"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.34", "pydantic>=2.10"]
+dependencies = ["fastapi~=0.115.0", "uvicorn[standard]~=0.34.0", "pydantic~=2.10.0", "structlog~=24.0", "opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25", "opentelemetry-instrumentation-fastapi>=0.46b0", "opentelemetry-exporter-otlp-proto-http>=1.25"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.28"]
 [build-system]

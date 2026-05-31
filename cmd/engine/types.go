@@ -20,16 +20,18 @@ type ModelConfig struct {
 }
 
 type AgentTask struct {
-	ID         string                 `json:"id"`
-	Agent      string                 `json:"agent"`
-	Input      map[string]interface{} `json:"input"`
-	Status     TaskStatus             `json:"status"`
-	Result     map[string]interface{} `json:"result,omitempty"`
-	Model      ModelConfig            `json:"model"`
-	TokensUsed int                    `json:"tokens_used"`
-	Cost       float64                `json:"cost"`
-	CreatedAt  time.Time              `json:"created_at"`
-	UpdatedAt  time.Time              `json:"updated_at"`
+	ID          string                 `json:"id"`
+	Agent       string                 `json:"agent"`
+	Input       map[string]interface{} `json:"input"`
+	Status      TaskStatus             `json:"status"`
+	Result      map[string]interface{} `json:"result,omitempty"`
+	Model       ModelConfig            `json:"model"`
+	TokensUsed  int                    `json:"tokens_used"`
+	Cost        float64                `json:"cost"`
+	CurrentStep int                    `json:"current_step"`
+	Error       string                 `json:"error,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
 }
 
 type SubmitTaskRequest struct {

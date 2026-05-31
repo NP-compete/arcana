@@ -7,8 +7,10 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      "/api": "http://localhost:8080",
-      "/events": "http://localhost:8084",
+      "/api": "http://arcana.localhost.me:8080",
+      "/auth": "http://arcana.localhost.me:8080",
+      "/agents": "http://arcana.localhost.me:8080",
+      "/events": "http://arcana.localhost.me:8080",
     },
   },
   test: {

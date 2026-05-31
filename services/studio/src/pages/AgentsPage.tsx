@@ -23,6 +23,9 @@ import {
   Checkbox,
   Alert,
   Spinner,
+  TextArea,
+  ExpandableSection,
+  Slider,
 } from "@patternfly/react-core";
 import { Table, Thead, Tr, Th, Tbody, Td } from "@patternfly/react-table";
 import {
@@ -33,13 +36,30 @@ import {
   AutomationIcon,
 } from "@patternfly/react-icons";
 import { ARCANA_AGENT_YAML } from "../constants/arcanaAgentYaml";
+import { useNavigate } from "react-router-dom";
 
 interface MeshAgent {
   name: string;
+  agent_type: string;
   capabilities: string[];
   protocols: string[];
   status: string;
   registered_at?: string;
+}
+
+interface DeepConfig {
+  world_model: boolean;
+  skill_graph: boolean;
+  blueprint: string;
+  memory_policy: string;
+  sub_agents: string[];
+  hitl_enabled: boolean;
+  self_improve: boolean;
+  system_prompt: string;
+  temperature: number;
+  max_tokens: number;
+  model_call_limit: number;
+  tool_call_limit: number;
 }
 
 interface AgentTemplate {
@@ -49,6 +69,8 @@ interface AgentTemplate {
   skills: string[];
   icon: React.ReactNode;
   agentName: string;
+  agentType: "create_agent" | "create_deep_agent";
+  deepConfig?: DeepConfig;
 }
 
 const MODEL_OPTIONS = ["gpt-4o", "claude-sonnet", "gpt-4o-mini"];
@@ -62,6 +84,7 @@ const AGENT_TEMPLATES: AgentTemplate[] = [
     model: "gpt-4o",
     skills: ["search", "code-gen", "summarize"],
     icon: <RobotIcon />,
+    agentType: "create_agent",
   },
   {
     name: "Code Assistant",
@@ -70,22 +93,53 @@ const AGENT_TEMPLATES: AgentTemplate[] = [
     model: "claude-sonnet",
     skills: ["code-review", "refactor", "test-gen"],
     icon: <CodeIcon />,
+    agentType: "create_agent",
   },
   {
     name: "Data Pipeline Agent",
     agentName: "data-pipeline-agent",
-    desc: "Orchestrates ETL workflows and data quality checks",
-    model: "gpt-4o-mini",
+    desc: "Orchestrates ETL workflows with world model prediction, skill graph, and HITL gates",
+    model: "gpt-4o",
     skills: ["sql-gen", "schema-validate", "data-profile"],
     icon: <CubesIcon />,
+    agentType: "create_deep_agent",
+    deepConfig: {
+      world_model: true,
+      skill_graph: true,
+      blueprint: "",
+      memory_policy: "tri-scope",
+      sub_agents: [],
+      hitl_enabled: true,
+      self_improve: true,
+      system_prompt: "",
+      temperature: 0.0,
+      max_tokens: 8192,
+      model_call_limit: 50,
+      tool_call_limit: 200,
+    },
   },
   {
-    name: "Ops Automation Agent",
-    agentName: "ops-automation-agent",
-    desc: "SRE agent for incident response and infrastructure management",
+    name: "Research Pipeline Agent",
+    agentName: "research-pipeline-agent",
+    desc: "Multi-agent research pipeline with sub-agent delegation, self-improvement, and Oracle world model",
     model: "claude-sonnet",
-    skills: ["k8s-ops", "log-analyze", "runbook-exec"],
+    skills: ["research", "summarize", "fact-check", "publish"],
     icon: <AutomationIcon />,
+    agentType: "create_deep_agent",
+    deepConfig: {
+      world_model: true,
+      skill_graph: true,
+      blueprint: "",
+      memory_policy: "tri-scope",
+      sub_agents: ["enabled"],
+      hitl_enabled: true,
+      self_improve: true,
+      system_prompt: "",
+      temperature: 0.0,
+      max_tokens: 8192,
+      model_call_limit: 50,
+      tool_call_limit: 200,
+    },
   },
 ];
 
@@ -109,9 +163,12 @@ const emptyDeployForm = () => ({
   model: MODEL_OPTIONS[0],
   capabilities: "",
   protocols: { a2a: true, acp: false, mcp: false } as Record<string, boolean>,
+  agentType: "create_agent" as "create_agent" | "create_deep_agent",
+  deepConfig: undefined as DeepConfig | undefined,
 });
 
 export const AgentsPage = () => {
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<MeshAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -141,6 +198,7 @@ export const AgentsPage = () => {
     fetchAgents();
   }, [fetchAgents]);
 
+
   const openDeployModal = (prefill?: Partial<ReturnType<typeof emptyDeployForm>>) => {
     setForm({ ...emptyDeployForm(), ...prefill });
     setSubmitError(null);
@@ -159,6 +217,8 @@ export const AgentsPage = () => {
       model: template.model,
       capabilities: template.skills.join(", "),
       protocols: { a2a: true, acp: true, mcp: false },
+      agentType: template.agentType,
+      deepConfig: template.deepConfig,
     });
   };
 
@@ -179,15 +239,20 @@ export const AgentsPage = () => {
     setSubmitError(null);
     setSubmitSuccess(null);
     try {
+      const body: Record<string, unknown> = {
+        name: form.name.trim(),
+        agent_type: form.agentType,
+        capabilities,
+        protocols,
+        status: "active",
+      };
+      if (form.agentType === "create_deep_agent" && form.deepConfig) {
+        body.deep_config = form.deepConfig;
+      }
       const res = await fetch("/api/v1/agents/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          capabilities,
-          protocols,
-          status: "active",
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -238,6 +303,7 @@ export const AgentsPage = () => {
               <Thead>
                 <Tr>
                   <Th>Name</Th>
+                  <Th>Type</Th>
                   <Th>Status</Th>
                   <Th>Capabilities</Th>
                   <Th>Protocols</Th>
@@ -245,8 +311,24 @@ export const AgentsPage = () => {
               </Thead>
               <Tbody>
                 {agents.map((agent) => (
-                  <Tr key={agent.name}>
-                    <Td dataLabel="Name">{agent.name}</Td>
+                  <Tr
+                    key={agent.name}
+                    isClickable
+                    onRowClick={() => navigate(`/agents/${agent.name}`)}
+                  >
+                    <Td dataLabel="Name">
+                      <Button variant="link" isInline onClick={() => navigate(`/agents/${agent.name}`)}>
+                        {agent.name}
+                      </Button>
+                    </Td>
+                    <Td dataLabel="Type">
+                      <Label
+                        color={agent.agent_type === "create_deep_agent" ? "purple" : "blue"}
+                        isCompact
+                      >
+                        {agent.agent_type === "create_deep_agent" ? "deep" : "standard"}
+                      </Label>
+                    </Td>
                     <Td dataLabel="Status">
                       <Label color={statusColor(agent.status)} isCompact>
                         {agent.status}
@@ -301,7 +383,13 @@ export const AgentsPage = () => {
                         {t.desc}
                       </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                        <Label color="purple" isCompact>{t.model}</Label>
+                        <Label
+                          color={t.agentType === "create_deep_agent" ? "purple" : "blue"}
+                          isCompact
+                        >
+                          {t.agentType === "create_deep_agent" ? "deep agent" : "standard agent"}
+                        </Label>
+                        <Label color="teal" isCompact>{t.model}</Label>
                         {t.skills.map((s) => (
                           <Label color="grey" isCompact key={s}>{s}</Label>
                         ))}
@@ -351,6 +439,39 @@ export const AgentsPage = () => {
                 isRequired
               />
             </FormGroup>
+            <FormGroup label="Agent Type" fieldId="agent-type">
+              <FormSelect
+                id="agent-type"
+                value={form.agentType}
+                onChange={(_e, v) =>
+                  setForm((f) => ({
+                    ...f,
+                    agentType: v as "create_agent" | "create_deep_agent",
+                    deepConfig:
+                      v === "create_deep_agent"
+                        ? f.deepConfig ?? {
+                            world_model: true,
+                            skill_graph: true,
+                            blueprint: "",
+                            memory_policy: "tri-scope",
+                            sub_agents: [],
+                            hitl_enabled: false,
+                            self_improve: false,
+                            system_prompt: "",
+                            temperature: 0.0,
+                            max_tokens: 8192,
+                            model_call_limit: 50,
+                            tool_call_limit: 200,
+                          }
+                        : undefined,
+                  }))
+                }
+                aria-label="Agent type"
+              >
+                <FormSelectOption value="create_agent" label="create_agent  —  Standard agent" />
+                <FormSelectOption value="create_deep_agent" label="create_deep_agent  —  Deep agent (world model, skills, HITL)" />
+              </FormSelect>
+            </FormGroup>
             <FormGroup label="Model" fieldId="agent-model">
               <FormSelect
                 id="agent-model"
@@ -384,6 +505,150 @@ export const AgentsPage = () => {
                 />
               ))}
             </FormGroup>
+            {form.agentType === "create_deep_agent" && (
+              <>
+                <Divider style={{ margin: "16px 0" }} />
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>Deep Agent Features</div>
+                <FormGroup fieldId="deep-features">
+                  <Checkbox
+                    id="deep-world-model"
+                    label="World Model (Oracle L2 — tool outcome prediction)"
+                    isChecked={form.deepConfig?.world_model ?? false}
+                    onChange={(_e, c) =>
+                      setForm((f) => ({ ...f, deepConfig: { ...f.deepConfig!, world_model: c } }))
+                    }
+                  />
+                  <Checkbox
+                    id="deep-skill-graph"
+                    label="Skill Graph (3-tier with experiential memory)"
+                    isChecked={form.deepConfig?.skill_graph ?? false}
+                    onChange={(_e, c) =>
+                      setForm((f) => ({ ...f, deepConfig: { ...f.deepConfig!, skill_graph: c } }))
+                    }
+                  />
+                  <Checkbox
+                    id="deep-hitl"
+                    label="HITL Gates (human-in-the-loop approval)"
+                    isChecked={form.deepConfig?.hitl_enabled ?? false}
+                    onChange={(_e, c) =>
+                      setForm((f) => ({ ...f, deepConfig: { ...f.deepConfig!, hitl_enabled: c } }))
+                    }
+                  />
+                  <Checkbox
+                    id="deep-self-improve"
+                    label="Self-Improvement (auto-crystallize skills)"
+                    isChecked={form.deepConfig?.self_improve ?? false}
+                    onChange={(_e, c) =>
+                      setForm((f) => ({ ...f, deepConfig: { ...f.deepConfig!, self_improve: c } }))
+                    }
+                  />
+                  <Checkbox
+                    id="deep-sub-agents"
+                    label="Sub-Agents (multi-agent delegation)"
+                    isChecked={(form.deepConfig?.sub_agents?.length ?? 0) > 0}
+                    onChange={(_e, c) =>
+                      setForm((f) => ({
+                        ...f,
+                        deepConfig: { ...f.deepConfig!, sub_agents: c ? ["enabled"] : [] },
+                      }))
+                    }
+                  />
+                </FormGroup>
+
+                <ExpandableSection
+                  toggleText="Advanced Parameters"
+                  style={{ marginTop: 16 }}
+                >
+                  <FormGroup label="System Prompt" fieldId="deep-system-prompt">
+                    <TextArea
+                      id="deep-system-prompt"
+                      value={form.deepConfig?.system_prompt ?? ""}
+                      onChange={(_e, v) =>
+                        setForm((f) => ({ ...f, deepConfig: { ...f.deepConfig!, system_prompt: v } }))
+                      }
+                      placeholder="Custom system prompt (leave blank for auto-generated)"
+                      rows={4}
+                      resizeOrientation="vertical"
+                    />
+                  </FormGroup>
+                  <FormGroup
+                    label={`Temperature: ${form.deepConfig?.temperature?.toFixed(1) ?? "0.0"}`}
+                    fieldId="deep-temperature"
+                    style={{ marginTop: 12 }}
+                  >
+                    <Slider
+                      id="deep-temperature"
+                      value={(form.deepConfig?.temperature ?? 0) * 100}
+                      max={200}
+                      min={0}
+                      step={10}
+                      onChange={(_e, v) =>
+                        setForm((f) => ({
+                          ...f,
+                          deepConfig: { ...f.deepConfig!, temperature: v / 100 },
+                        }))
+                      }
+                      areCustomStepsContinuous
+                    />
+                  </FormGroup>
+                  <FormGroup label="Max Output Tokens" fieldId="deep-max-tokens" style={{ marginTop: 12 }}>
+                    <TextInput
+                      id="deep-max-tokens"
+                      type="number"
+                      value={form.deepConfig?.max_tokens ?? 8192}
+                      onChange={(_e, v) =>
+                        setForm((f) => ({
+                          ...f,
+                          deepConfig: { ...f.deepConfig!, max_tokens: parseInt(v) || 8192 },
+                        }))
+                      }
+                    />
+                  </FormGroup>
+                  <FormGroup label="Memory Policy" fieldId="deep-memory-policy" style={{ marginTop: 12 }}>
+                    <FormSelect
+                      id="deep-memory-policy"
+                      value={form.deepConfig?.memory_policy ?? "tri-scope"}
+                      onChange={(_e, v) =>
+                        setForm((f) => ({ ...f, deepConfig: { ...f.deepConfig!, memory_policy: v } }))
+                      }
+                    >
+                      <FormSelectOption value="tri-scope" label="Tri-Scope (short + long + skill)" />
+                      <FormSelectOption value="long-term" label="Long-Term Only" />
+                      <FormSelectOption value="short-term" label="Short-Term Only" />
+                      <FormSelectOption value="none" label="No Memory" />
+                    </FormSelect>
+                  </FormGroup>
+                  <div style={{ display: "flex", gap: 16, marginTop: 12 }}>
+                    <FormGroup label="Model Call Limit" fieldId="deep-model-limit" style={{ flex: 1 }}>
+                      <TextInput
+                        id="deep-model-limit"
+                        type="number"
+                        value={form.deepConfig?.model_call_limit ?? 50}
+                        onChange={(_e, v) =>
+                          setForm((f) => ({
+                            ...f,
+                            deepConfig: { ...f.deepConfig!, model_call_limit: parseInt(v) || 50 },
+                          }))
+                        }
+                      />
+                    </FormGroup>
+                    <FormGroup label="Tool Call Limit" fieldId="deep-tool-limit" style={{ flex: 1 }}>
+                      <TextInput
+                        id="deep-tool-limit"
+                        type="number"
+                        value={form.deepConfig?.tool_call_limit ?? 200}
+                        onChange={(_e, v) =>
+                          setForm((f) => ({
+                            ...f,
+                            deepConfig: { ...f.deepConfig!, tool_call_limit: parseInt(v) || 200 },
+                          }))
+                        }
+                      />
+                    </FormGroup>
+                  </div>
+                </ExpandableSection>
+              </>
+            )}
           </Form>
         </ModalBody>
         <ModalFooter>

@@ -1,0 +1,49 @@
+# External Database Configuration
+#
+# Set DB_MODE to control which PostgreSQL instance Arcana connects to:
+#   "cnpg"     → CloudNativePG cluster (arcana-db-rw.arcana.svc.cluster.local)
+#   "external" → Bring-your-own PostgreSQL (configure EXTERNAL_DB_* below)
+#   "local"    → Development single-pod postgres (postgres.arcana.svc.cluster.local)
+#
+# For per-agent external databases, set AGENT_DB_MODE on the agent's DeepAgentConfig:
+#   "shared"    → Agent uses the platform database (default)
+#   "dedicated" → Agent gets its own database within the platform PostgreSQL
+#   "external"  → Agent uses an external database URL (specify db_url in deep_config)
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arcana-db-config
+  namespace: arcana
+  labels:
+    app.kubernetes.io/part-of: arcana
+data:
+  # Platform database mode
+  DB_MODE: "local"
+
+  # CNPG settings (used when DB_MODE=cnpg)
+  CNPG_CLUSTER_HOST: "arcana-db-rw.arcana.svc.cluster.local"
+  CNPG_CLUSTER_RO_HOST: "arcana-db-ro.arcana.svc.cluster.local"
+
+  # External DB settings (used when DB_MODE=external)
+  EXTERNAL_DB_HOST: ""
+  EXTERNAL_DB_PORT: "5432"
+  EXTERNAL_DB_NAME: "arcana"
+  EXTERNAL_DB_SSLMODE: "require"
+
+  # Per-agent DB mode (default for new agents)
+  AGENT_DB_MODE: "dedicated"
+---
+# External DB credentials (used when DB_MODE=external)
+# Replace with your actual credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: arcana-external-db-credentials
+  namespace: arcana
+  labels:
+    app.kubernetes.io/part-of: arcana
+type: Opaque
+stringData:
+  EXTERNAL_DB_USER: ""
+  EXTERNAL_DB_PASSWORD: ""

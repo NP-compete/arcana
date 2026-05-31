@@ -1,0 +1,21 @@
+# cert-manager issuer (applied when cert-manager is available)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: arcana-selfsigned
+spec:
+  selfSigned: {}
+---
+# Fallback: manually generated self-signed cert for Kind development
+# Generate with: openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#   -keyout tls.key -out tls.crt -subj "/CN=arcana.local"
+# kubectl create secret tls arcana-tls --cert=tls.crt --key=tls.key -n arcana
+apiVersion: v1
+kind: Secret
+metadata:
+  name: arcana-tls
+  namespace: arcana
+type: kubernetes.io/tls
+data:
+  tls.crt: ""
+  tls.key: ""

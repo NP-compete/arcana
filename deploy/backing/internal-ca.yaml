@@ -1,0 +1,57 @@
+# Self-signed issuer for bootstrapping the CA
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: arcana-selfsigned
+spec:
+  selfSigned: {}
+---
+# Internal CA certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: arcana-internal-ca
+  namespace: arcana
+spec:
+  isCA: true
+  commonName: arcana-internal-ca
+  secretName: arcana-internal-ca-secret
+  duration: 87600h # 10 years
+  renewBefore: 8760h # 1 year
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: arcana-selfsigned
+    kind: ClusterIssuer
+---
+# Issuer using the internal CA
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: arcana-internal-issuer
+  namespace: arcana
+spec:
+  ca:
+    secretName: arcana-internal-ca-secret
+---
+# Wildcard certificate for all arcana services
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: arcana-service-tls
+  namespace: arcana
+spec:
+  secretName: arcana-service-tls
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - "*.arcana.svc.cluster.local"
+    - "*.arcana.svc"
+    - "localhost"
+  issuerRef:
+    name: arcana-internal-issuer
+    kind: Issuer

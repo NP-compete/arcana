@@ -1,0 +1,68 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  go-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Install security tools
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run gosec
+        run: |
+          for svc in engine operator mesh api agui blueprint oracle codex-router codex-searcher codex-ingestor codex-scorer tools sandbox audit scheduler registry finops gitops; do
+            echo "::group::gosec cmd/$svc"
+            gosec -quiet ./cmd/$svc/...
+            echo "::endgroup::"
+          done
+      - name: Run govulncheck
+        run: |
+          for svc in engine operator mesh api agui blueprint oracle codex-router codex-searcher codex-ingestor codex-scorer tools sandbox audit scheduler registry finops gitops; do
+            echo "::group::govulncheck cmd/$svc"
+            cd cmd/$svc && govulncheck ./... && cd ../..
+            echo "::endgroup::"
+          done
+
+  python-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install security tools
+        run: pip install bandit safety
+      - name: Run bandit
+        run: |
+          for svc in skills ward memory connectors graph forge models probe annotate; do
+            echo "::group::bandit services/$svc"
+            bandit -r services/$svc/app/ -ll
+            echo "::endgroup::"
+          done
+
+  trivy-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          format: 'table'

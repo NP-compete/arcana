@@ -1,0 +1,1427 @@
+openapi: 3.1.0
+info:
+  title: Arcana API Gateway
+  version: 0.1.0
+  description: |
+    Unified API for the Arcana AI platform. The gateway exposes native routes for
+    platform health, chat, authentication, and enterprise features, and reverse-proxies
+    requests to backend services across eight planes (agent, data, tool, model, govern,
+    quality, ops, infra).
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.arcana.example.com
+    description: Production
+
+tags:
+  - name: Platform
+    description: Health, version, and route discovery
+  - name: Chat
+    description: Conversational agent setup and platform chat
+  - name: Agents
+    description: Agent CRUD and per-agent chat (proxied to Mesh)
+  - name: Messaging
+    description: A2A messaging and delegation (proxied to Mesh)
+  - name: Auth
+    description: API keys, JWT tokens, roles, and identity
+  - name: Tenants
+    description: Multi-tenant management
+  - name: Enterprise
+    description: Audit, compliance, and platform configuration
+  - name: Sharing
+    description: Asset visibility and sharing
+  - name: Agent Plane
+    description: Tasks, blueprints, predictions, memory
+  - name: Data Plane
+    description: Search, ingest, connectors, graph
+  - name: Tool Plane
+    description: MCP tools and sandbox execution
+  - name: Model Plane
+    description: Experiments, models, budgets
+  - name: Govern Plane
+    description: Guardrails, rules, stats, audit
+  - name: Quality Plane
+    description: Evaluations and annotations
+  - name: Ops Plane
+    description: Skills, scheduler, catalog, costs, promotions
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Platform]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      tags: [Platform]
+      summary: Readiness probe
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        '503':
+          description: Dependency unavailable (e.g. database)
+
+  /api/v1/version:
+    get:
+      tags: [Platform]
+      summary: Platform version info
+      security: []
+      responses:
+        '200':
+          description: Version metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+
+  /api/v1/health:
+    get:
+      tags: [Platform]
+      summary: System health across all services
+      responses:
+        '200':
+          description: Health report for backing services and routed services
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealth'
+
+  /api/v1/routes:
+    get:
+      tags: [Platform]
+      summary: List proxied service routes
+      responses:
+        '200':
+          description: Route table
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RouteInfo'
+
+  /api/v1/chat:
+    post:
+      tags: [Chat]
+      summary: Platform chat (agent setup, search, costs, etc.)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Chat response with optional action steps
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+
+  /api/v1/agents:
+    get:
+      tags: [Agents]
+      summary: List agents
+      responses:
+        '200':
+          description: Agent list (proxied to Mesh)
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Agents]
+      summary: Create or register agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRegisterRequest'
+      responses:
+        '201':
+          description: Agent created
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /api/v1/agents/{agentName}:
+    get:
+      tags: [Agents]
+      summary: Get agent by name
+      parameters:
+        - $ref: '#/components/parameters/AgentName'
+      responses:
+        '200':
+          description: Agent details
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Agents]
+      summary: Update agent
+      parameters:
+        - $ref: '#/components/parameters/AgentName'
+      responses:
+        '200':
+          description: Agent updated
+    delete:
+      tags: [Agents]
+      summary: Delete agent
+      parameters:
+        - $ref: '#/components/parameters/AgentName'
+      responses:
+        '204':
+          description: Agent deleted
+
+  /api/v1/agents/{agentName}/chat:
+    post:
+      tags: [Agents]
+      summary: Chat with a specific agent
+      parameters:
+        - $ref: '#/components/parameters/AgentName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentChatRequest'
+      responses:
+        '200':
+          description: Agent chat response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentChatResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/messages:
+    post:
+      tags: [Messaging]
+      summary: Send A2A message
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  type: string
+                to:
+                  type: string
+                payload:
+                  type: object
+      responses:
+        '200':
+          description: Message sent (proxied to Mesh)
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /api/v1/messages/{messageId}:
+    get:
+      tags: [Messaging]
+      summary: Get message by ID
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message details
+
+  /api/v1/delegate:
+    post:
+      tags: [Messaging]
+      summary: Delegate task to another agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from_agent:
+                  type: string
+                to_agent:
+                  type: string
+                task:
+                  type: string
+      responses:
+        '200':
+          description: Delegation accepted
+
+  /api/v1/auth/token:
+    post:
+      tags: [Auth]
+      summary: Generate JWT token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+
+  /api/v1/auth/keys:
+    get:
+      tags: [Auth]
+      summary: List API keys
+      responses:
+        '200':
+          description: API key list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/APIKey'
+    post:
+      tags: [Auth]
+      summary: Create API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '201':
+          description: Key created (raw key shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                  details:
+                    $ref: '#/components/schemas/APIKey'
+                  warning:
+                    type: string
+
+  /api/v1/auth/keys/{keyId}:
+    delete:
+      tags: [Auth]
+      summary: Revoke API key
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Key revoked
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated identity
+      responses:
+        '200':
+          description: Caller identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Identity'
+
+  /api/v1/auth/roles:
+    get:
+      tags: [Auth]
+      summary: List RBAC role definitions
+      responses:
+        '200':
+          description: Available roles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Role'
+
+  /api/v1/tenants:
+    get:
+      tags: [Tenants]
+      summary: List tenants
+      responses:
+        '200':
+          description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+    post:
+      tags: [Tenants]
+      summary: Create tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+
+  /api/v1/tenants/{tenantId}:
+    get:
+      tags: [Tenants]
+      summary: Get tenant by ID
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tenant details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/enterprise/audit:
+    get:
+      tags: [Enterprise]
+      summary: Query audit log entries
+      parameters:
+        - name: actor
+          in: query
+          schema:
+            type: string
+        - name: tenant
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEntry'
+                  count:
+                    type: integer
+
+  /api/v1/enterprise/audit/stats:
+    get:
+      tags: [Enterprise]
+      summary: Audit log statistics
+      responses:
+        '200':
+          description: Aggregated audit stats
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/enterprise/config:
+    get:
+      tags: [Enterprise]
+      summary: Enterprise platform configuration
+      responses:
+        '200':
+          description: Config snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnterpriseConfig'
+
+  /api/v1/compliance:
+    get:
+      tags: [Enterprise]
+      summary: Compliance report or framework list
+      parameters:
+        - name: framework
+          in: query
+          schema:
+            type: string
+            enum: [soc2, gdpr, hipaa, iso27001, euaiact]
+      responses:
+        '200':
+          description: Framework list or compliance report
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      supported_frameworks:
+                        type: array
+                        items:
+                          type: string
+                  - $ref: '#/components/schemas/ComplianceReport'
+
+  /api/v1/sharing:
+    get:
+      tags: [Sharing]
+      summary: List or get asset sharing settings
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            description: Asset type (skills, agents, models, etc.)
+        - name: name
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Sharing configuration
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AssetSharing'
+                  - type: object
+                    properties:
+                      shares:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AssetSharing'
+    put:
+      tags: [Sharing]
+      summary: Update asset sharing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSharingRequest'
+      responses:
+        '200':
+          description: Sharing updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetSharing'
+    delete:
+      tags: [Sharing]
+      summary: Remove sharing override
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Sharing removed
+
+  # --- Proxied: Agent Plane ---
+
+  /api/v1/tasks:
+    get:
+      tags: [Agent Plane]
+      summary: List tasks (Engine)
+      responses:
+        '200':
+          description: Task list
+    post:
+      tags: [Agent Plane]
+      summary: Submit task (Engine)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskSubmitRequest'
+      responses:
+        '202':
+          description: Task accepted
+
+  /api/v1/blueprints:
+    get:
+      tags: [Agent Plane]
+      summary: List blueprints
+      responses:
+        '200':
+          description: Blueprint catalog
+
+  /api/v1/predict:
+    post:
+      tags: [Agent Plane]
+      summary: Oracle prediction / simulation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Prediction result
+
+  /api/v1/memory/short-term:
+    post:
+      tags: [Agent Plane]
+      summary: Write short-term memory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agent_id:
+                  type: string
+                key:
+                  type: string
+                value:
+                  type: string
+                ttl:
+                  type: integer
+      responses:
+        '201':
+          description: Memory stored
+
+  /api/v1/memory/long-term:
+    post:
+      tags: [Agent Plane]
+      summary: Write long-term memory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agent_id:
+                  type: string
+                content:
+                  type: string
+                metadata:
+                  type: object
+      responses:
+        '201':
+          description: Memory stored
+
+  /api/v1/memory/long-term/{agentId}/search:
+    get:
+      tags: [Agent Plane]
+      summary: Search long-term memory
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: top_k
+          in: query
+          schema:
+            type: integer
+            default: 5
+      responses:
+        '200':
+          description: Search results
+
+  # --- Proxied: Data Plane ---
+
+  /api/v1/search:
+    post:
+      tags: [Data Plane]
+      summary: Codex knowledge search
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Search hits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  /api/v1/ingest:
+    post:
+      tags: [Data Plane]
+      summary: Ingest documents into Codex
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '202':
+          description: Ingestion started
+
+  /api/v1/connectors:
+    get:
+      tags: [Data Plane]
+      summary: List data connectors
+      responses:
+        '200':
+          description: Connector catalog
+
+  /api/v1/graph:
+    get:
+      tags: [Data Plane]
+      summary: Query knowledge graph
+      responses:
+        '200':
+          description: Graph data
+
+  # --- Proxied: Tool Plane ---
+
+  /api/v1/tools:
+    get:
+      tags: [Tool Plane]
+      summary: List MCP tool servers
+      responses:
+        '200':
+          description: Tool server registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  servers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        tools:
+                          type: array
+                          items:
+                            type: object
+
+  /api/v1/exec:
+    post:
+      tags: [Tool Plane]
+      summary: Execute code in sandbox
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                language:
+                  type: string
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Execution result
+
+  # --- Proxied: Model Plane ---
+
+  /api/v1/experiments:
+    get:
+      tags: [Model Plane]
+      summary: List Forge experiments
+      responses:
+        '200':
+          description: Experiment list
+
+  /api/v1/models:
+    get:
+      tags: [Model Plane]
+      summary: List available models
+      responses:
+        '200':
+          description: Model catalog
+
+  /api/v1/budget:
+    get:
+      tags: [Model Plane]
+      summary: Model budget status
+      responses:
+        '200':
+          description: Budget info
+
+  # --- Proxied: Govern Plane ---
+
+  /api/v1/check:
+    post:
+      tags: [Govern Plane]
+      summary: Run guardrail check (Ward)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuardrailCheckRequest'
+      responses:
+        '200':
+          description: Guardrail verdict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuardrailCheckResponse'
+
+  /api/v1/rules:
+    get:
+      tags: [Govern Plane]
+      summary: List Ward guardrail rules
+      responses:
+        '200':
+          description: Rule definitions
+
+  /api/v1/stats:
+    get:
+      tags: [Govern Plane]
+      summary: Ward guardrail statistics
+      responses:
+        '200':
+          description: Stats snapshot
+
+  /api/v1/audit:
+    get:
+      tags: [Govern Plane]
+      summary: Service-level audit events (Audit service)
+      responses:
+        '200':
+          description: Audit events
+
+  # --- Proxied: Quality Plane ---
+
+  /api/v1/eval/run:
+    post:
+      tags: [Quality Plane]
+      summary: Run skill evaluation (Probe)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                skill_ref:
+                  type: string
+                judges:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '202':
+          description: Evaluation started
+
+  /api/v1/annotations:
+    get:
+      tags: [Quality Plane]
+      summary: List annotations
+      responses:
+        '200':
+          description: Annotation list
+    post:
+      tags: [Quality Plane]
+      summary: Create annotation
+      responses:
+        '201':
+          description: Annotation created
+
+  # --- Proxied: Ops Plane ---
+
+  /api/v1/skills:
+    get:
+      tags: [Ops Plane]
+      summary: List skills
+      responses:
+        '200':
+          description: Skill catalog
+
+  /api/v1/scheduler:
+    get:
+      tags: [Ops Plane]
+      summary: List scheduled jobs
+      responses:
+        '200':
+          description: Schedule list
+
+  /api/v1/catalog/skills:
+    post:
+      tags: [Ops Plane]
+      summary: Register skill in catalog (Registry)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                version:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Skill registered
+
+  /api/v1/costs:
+    get:
+      tags: [Ops Plane]
+      summary: Platform cost report (FinOps)
+      responses:
+        '200':
+          description: Cost summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_usd:
+                    type: number
+                    format: float
+
+  /api/v1/promotions:
+    get:
+      tags: [Ops Plane]
+      summary: GitOps promotion status
+      responses:
+        '200':
+          description: Promotion pipeline
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key issued via /api/v1/auth/keys
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT from /api/v1/auth/token or external IdP
+
+  parameters:
+    AgentName:
+      name: agentName
+      in: path
+      required: true
+      schema:
+        type: string
+      example: email-marketing-agent
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: HTTP method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadGateway:
+      description: Upstream service unavailable
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: service_unavailable
+              message:
+                type: string
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    VersionInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: arcana
+        version:
+          type: string
+          example: "0.1.0"
+        services:
+          type: integer
+        crds:
+          type: integer
+        planes:
+          type: integer
+
+    ServiceHealth:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [healthy, unreachable]
+        latency:
+          type: string
+        port:
+          type: integer
+        plane:
+          type: string
+
+    SystemHealth:
+      type: object
+      properties:
+        platform:
+          type: string
+        version:
+          type: string
+        uptime:
+          type: string
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceHealth'
+
+    RouteInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        prefix:
+          type: string
+        plane:
+          type: string
+        port:
+          type: integer
+
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        session_id:
+          type: string
+
+    ChatStep:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [action, result, error]
+        service:
+          type: string
+        message:
+          type: string
+
+    ChatResponse:
+      type: object
+      properties:
+        reply:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatStep'
+        session_id:
+          type: string
+
+    AgentChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        session_id:
+          type: string
+
+    AgentChatResponse:
+      allOf:
+        - $ref: '#/components/schemas/ChatResponse'
+        - type: object
+          properties:
+            agent:
+              type: string
+
+    AgentRegisterRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        agent_type:
+          type: string
+          enum: [create_agent, create_deep_agent]
+        model:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        protocols:
+          type: array
+          items:
+            type: string
+        deep_config:
+          type: object
+
+    TaskSubmitRequest:
+      type: object
+      properties:
+        agent:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+        input:
+          type: object
+        model:
+          type: object
+
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        profile:
+          type: string
+          default: default
+        top_k:
+          type: integer
+          default: 5
+
+    SearchResponse:
+      type: object
+      properties:
+        total_hits:
+          type: integer
+        results:
+          type: array
+          items:
+            type: object
+
+    GuardrailCheckRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        agent_id:
+          type: string
+        direction:
+          type: string
+          enum: [input, output]
+
+    GuardrailCheckResponse:
+      type: object
+      properties:
+        verdict:
+          type: string
+        layer_results:
+          type: array
+          items:
+            type: object
+
+    Identity:
+      type: object
+      properties:
+        user_id:
+          type: string
+        tenant:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        email:
+          type: string
+        key_id:
+          type: string
+        auth_type:
+          type: string
+
+    Role:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        user_id:
+          type: string
+        tenant:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        rate_limit_per_second:
+          type: integer
+        revoked:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    CreateAPIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        user_id:
+          type: string
+        tenant:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        rate_limit_per_second:
+          type: integer
+          default: 50
+
+    TokenRequest:
+      type: object
+      properties:
+        sub:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        tenant:
+          type: string
+        ttl_seconds:
+          type: integer
+          default: 3600
+
+    TokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        expires_in:
+          type: integer
+        token_type:
+          type: string
+          example: Bearer
+
+    Tenant:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        max_agents:
+          type: integer
+        max_models:
+          type: integer
+        budget_limit_usd:
+          type: number
+
+    CreateTenantRequest:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        max_agents:
+          type: integer
+        max_models:
+          type: integer
+        budget_limit_usd:
+          type: number
+
+    AuditEntry:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        tenant:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        detail:
+          type: string
+        source_ip:
+          type: string
+
+    EnterpriseConfig:
+      type: object
+      properties:
+        auth_mode:
+          type: string
+          enum: [open, apikey, jwt]
+        rbac_enabled:
+          type: boolean
+        rate_limiting_enabled:
+          type: boolean
+        audit_enabled:
+          type: boolean
+        multi_tenancy:
+          type: boolean
+        compliance_frameworks:
+          type: array
+          items:
+            type: string
+        api_key_count:
+          type: integer
+        tenant_count:
+          type: integer
+        roles:
+          type: array
+          items:
+            type: string
+
+    ComplianceReport:
+      type: object
+      properties:
+        framework:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        controls:
+          type: array
+          items:
+            type: object
+
+    AssetSharing:
+      type: object
+      properties:
+        asset_type:
+          type: string
+        asset_name:
+          type: string
+        owner:
+          type: string
+        tenant:
+          type: string
+        visibility:
+          type: string
+          enum: [private, team, public]
+        shared_with:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateSharingRequest:
+      type: object
+      required: [asset_type, asset_name]
+      properties:
+        asset_type:
+          type: string
+        asset_name:
+          type: string
+        visibility:
+          type: string
+          enum: [private, team, public]
+        shared_with:
+          type: array
+          items:
+            type: string

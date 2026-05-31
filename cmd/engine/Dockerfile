@@ -1,9 +1,22 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
+RUN apk add --no-cache git
 WORKDIR /src
-COPY cmd/engine/go.mod cmd/engine/go.sum ./
-RUN go mod download
-COPY cmd/engine/ ./
-RUN CGO_ENABLED=0 go build -o /arcana-engine .
+COPY cmd/engine/go.mod cmd/engine/go.sum ./cmd/engine/
+COPY pkg/common/go.mod ./pkg/common/
+COPY pkg/db/go.mod pkg/db/go.sum ./pkg/db/
+COPY pkg/logger/go.mod ./pkg/logger/
+COPY pkg/metrics/go.mod pkg/metrics/go.sum ./pkg/metrics/
+COPY pkg/server/go.mod pkg/server/go.sum ./pkg/server/
+COPY pkg/tracing/go.mod pkg/tracing/go.sum ./pkg/tracing/
+RUN cd cmd/engine && go mod download
+COPY cmd/engine/ ./cmd/engine/
+COPY pkg/common/ ./pkg/common/
+COPY pkg/db/ ./pkg/db/
+COPY pkg/logger/ ./pkg/logger/
+COPY pkg/metrics/ ./pkg/metrics/
+COPY pkg/server/ ./pkg/server/
+COPY pkg/tracing/ ./pkg/tracing/
+RUN cd cmd/engine && CGO_ENABLED=0 GOFLAGS=-mod=mod go build -o /arcana-engine .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /arcana-engine /arcana-engine

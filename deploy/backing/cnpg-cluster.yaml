@@ -1,0 +1,93 @@
+# CloudNativePG Cluster for Arcana Platform
+#
+# Prerequisites:
+#   kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-1.25.1.yaml
+#
+# Usage:
+#   DB_MODE=cnpg  → services connect to arcana-db-rw.arcana.svc.cluster.local
+#   DB_MODE=external → services connect to EXTERNAL_DB_HOST (BYO database)
+#   DB_MODE=local → dev mode, connect to postgres.arcana.svc.cluster.local (single pod)
+#
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: arcana-db
+  namespace: arcana
+  labels:
+    app.kubernetes.io/part-of: arcana
+    app.kubernetes.io/component: database
+spec:
+  instances: 3
+
+  postgresql:
+    parameters:
+      shared_buffers: "256MB"
+      max_connections: "200"
+      effective_cache_size: "768MB"
+      work_mem: "4MB"
+      maintenance_work_mem: "64MB"
+      log_statement: "ddl"
+      log_min_duration_statement: "1000"
+    shared_preload_libraries:
+      - "vector"
+    pg_hba:
+      - host all all 0.0.0.0/0 scram-sha-256
+
+  bootstrap:
+    initdb:
+      database: arcana
+      owner: arcana
+      secret:
+        name: arcana-db-credentials
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector
+        - CREATE EXTENSION IF NOT EXISTS pg_trgm
+        - "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
+        - CREATE DATABASE arcana_skills OWNER arcana
+        - CREATE DATABASE arcana_temporal OWNER arcana
+        - CREATE DATABASE arcana_temporal_visibility OWNER arcana
+
+  storage:
+    size: 20Gi
+    storageClass: ""
+
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: "1"
+
+  monitoring:
+    enablePodMonitor: true
+
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://arcana-backups/cnpg/
+      endpointURL: http://minio.arcana.svc.cluster.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: arcana-platform-secret
+          key: MINIO_ROOT_USER
+        secretAccessKey:
+          name: arcana-platform-secret
+          key: MINIO_ROOT_PASSWORD
+
+  nodeMaintenanceWindow:
+    inProgress: false
+    reusePVC: true
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: arcana-db-credentials
+  namespace: arcana
+  labels:
+    app.kubernetes.io/part-of: arcana
+type: kubernetes.io/basic-auth
+stringData:
+  username: arcana
+  password: arcana-dev
