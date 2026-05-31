@@ -49,6 +49,33 @@ Thumbs.db
 *.o
 *.a
 
+# Go service binaries (compiled outputs in cmd/)
+cmd/agui/agui
+cmd/api/api
+cmd/audit/audit
+cmd/blueprint/blueprint
+cmd/codex-ingestor/codex-ingestor
+cmd/codex-router/codex-router
+cmd/codex-scorer/codex-scorer
+cmd/codex-searcher/codex-searcher
+cmd/engine/engine
+cmd/finops/finops
+cmd/gitops/gitops
+cmd/mesh/mesh
+cmd/operator/operator
+cmd/oracle/oracle
+cmd/registry/registry
+cmd/sandbox/sandbox
+cmd/scheduler/scheduler
+cmd/tools/tools
+
+# Test results
+test-results/
+**/test-results/
+
+# Playwright
+.playwright-mcp/
+
 # Kind
 kubeconfig-*
 
