@@ -1,0 +1,96 @@
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaAgent
+metadata:
+  name: docs-assistant
+  namespace: support
+spec:
+  model: gpt-4o
+  skills:
+    - document-search
+    - summarize
+    - cite-sources
+  memory:
+    backend: pgvector
+    ttl: 72h
+  budget:
+    maxTokensPerTurn: 4000
+    routingStrategy: seqroute
+  sandbox:
+    runtime: none
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaCodex
+metadata:
+  name: product-docs
+  namespace: support
+spec:
+  sources:
+    - type: git
+      url: https://github.com/acme/product-docs.git
+      branch: main
+      glob: "docs/**/*.md"
+    - type: confluence
+      space: PROD
+      connector: confluence-connector
+  ingestion:
+    schedule: "0 */6 * * *"
+    chunking:
+      strategy: hierarchical
+      maxChunkSize: 1024
+      overlap: 128
+    embedding:
+      model: text-embedding-3-large
+      dimensions: 1536
+  retrieval:
+    strategy: hybrid
+    semantic:
+      topK: 10
+    keyword:
+      topK: 5
+    reranker:
+      model: cross-encoder/ms-marco-MiniLM-L-12-v2
+      topK: 5
+  storage:
+    vectorStore: pgvector
+    objectStore: minio
+    bucket: codex-product-docs
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaConnector
+metadata:
+  name: confluence-connector
+  namespace: support
+spec:
+  type: confluence
+  auth:
+    secretRef:
+      name: confluence-credentials
+      namespace: support
+  config:
+    baseUrl: https://acme.atlassian.net
+    rateLimit: 10
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaEvalSuite
+metadata:
+  name: docs-retrieval-eval
+  namespace: support
+spec:
+  agent: docs-assistant
+  schedule: "0 2 * * 1"
+  metrics:
+    - name: retrieval-relevance
+      type: llm-judge
+      threshold: 0.85
+      action: warn
+    - name: answer-faithfulness
+      type: llm-judge
+      threshold: 0.90
+      action: block
+    - name: citation-accuracy
+      type: exact-match
+      threshold: 0.95
+      action: warn
+  dataset:
+    ref: docs-eval-golden-set
+    minSamples: 50

@@ -1,0 +1,77 @@
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaAgent
+metadata:
+  name: code-reviewer
+  namespace: engineering
+spec:
+  model: claude-sonnet-4-20250514
+  skills:
+    - github-pr-review
+    - static-analysis
+    - security-scan
+  memory:
+    backend: pgvector
+    ttl: 24h
+  budget:
+    maxTokensPerTurn: 8000
+    routingStrategy: baar
+  sandbox:
+    runtime: gvisor
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaSkillRegistry
+metadata:
+  name: github-pr-review
+  namespace: engineering
+spec:
+  version: "1.2.0"
+  runtime: python
+  entrypoint: skills/github_pr_review.py
+  mcp:
+    server: github-mcp
+    tools:
+      - get_pull_request
+      - list_pull_request_files
+      - create_review_comment
+  inputs:
+    - name: repo
+      type: string
+      required: true
+    - name: pr_number
+      type: integer
+      required: true
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaGuardrail
+metadata:
+  name: code-review-guardrails
+  namespace: engineering
+spec:
+  agent: code-reviewer
+  rules:
+    input:
+      - type: content-filter
+        action: block
+        description: Block requests containing secrets or credentials
+        pattern: "(?i)(api[_-]?key|password|secret|token)\\s*[:=]\\s*['\"][^'\"]{8,}"
+    output:
+      - type: content-filter
+        action: warn
+        description: Flag reviews that approve without substantive feedback
+        pattern: "(?i)^(lgtm|looks good|approved)$"
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaBudget
+metadata:
+  name: code-review-budget
+  namespace: engineering
+spec:
+  agent: code-reviewer
+  limits:
+    maxTokensPerDay: 500000
+    maxTokensPerTurn: 8000
+    maxCostPerMonth: 50.00
+  alerts:
+    - threshold: 80
+      channel: slack
+      webhook: "${SLACK_ENGINEERING_WEBHOOK}"

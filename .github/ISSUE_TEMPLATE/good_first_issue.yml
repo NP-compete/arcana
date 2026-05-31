@@ -1,0 +1,57 @@
+name: Good First Issue
+description: A well-scoped task for new contributors
+labels: ["good first issue", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template is for maintainers to create beginner-friendly issues.
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: Which service, CRD, or package?
+      placeholder: "e.g., pkg/mcp, services/skills, deploy/helm/arcana-engine"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs to be done
+      description: Clear, specific description of the task
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this matters and where to start reading code
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know this is done?
+      value: |
+        - [ ]
+        - [ ]
+        - [ ] Tests pass (`make test`)
+        - [ ] Linting passes (`make lint`)
+    validations:
+      required: true
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Estimated difficulty
+      options:
+        - Easy (< 1 hour)
+        - Medium (1-4 hours)
+        - Hard (4+ hours)
+    validations:
+      required: true
+  - type: input
+    id: skills
+    attributes:
+      label: Skills needed
+      placeholder: "e.g., Go, Python, Kubernetes CRDs, React"
