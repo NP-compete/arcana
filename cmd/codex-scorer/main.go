@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"net/http"
 	"os"
+
+	"github.com/NP-compete/arcana/pkg/server"
 )
 
 func envOr(key, fallback string) string {
@@ -15,25 +15,16 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	port := envOr("PORT", "8093")
+	httpSrv := server.New(server.Config{
+		ServiceName: "codex-scorer",
+		Port:        "8093",
+	})
 
 	srv := &Server{store: NewScorerStore()}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-	mux.HandleFunc("/api/v1/score", srv.handleScore)
-	mux.HandleFunc("/api/v1/contradictions", srv.handleContradictions)
-	mux.HandleFunc("/api/v1/supersession", srv.handleSupersession)
+	httpSrv.Handle("/api/v1/score", corsMiddleware(http.HandlerFunc(srv.handleScore)))
+	httpSrv.Handle("/api/v1/contradictions", corsMiddleware(http.HandlerFunc(srv.handleContradictions)))
+	httpSrv.Handle("/api/v1/supersession", corsMiddleware(http.HandlerFunc(srv.handleSupersession)))
 
-	log.Printf("codex-scorer starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, corsMiddleware(mux)))
+	httpSrv.ListenAndServe()
 }

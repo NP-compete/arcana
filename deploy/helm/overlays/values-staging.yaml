@@ -1,0 +1,28 @@
+replicaCount: 2
+
+image:
+  tag: staging
+  pullPolicy: Always
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 100m
+  limits:
+    memory: 256Mi
+    cpu: 500m
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPU: 75
+  targetMemory: 80
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+env:
+  ARCANA_ENV: "staging"
+  LOG_LEVEL: "info"

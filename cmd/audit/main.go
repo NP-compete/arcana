@@ -1,36 +1,24 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net/http"
-	"os"
+	"github.com/NP-compete/arcana/pkg/db"
+	"github.com/NP-compete/arcana/pkg/server"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8100"
-	}
+	dbConn := db.MustConnect()
 
-	store := NewAuditStore()
+	httpSrv := server.New(server.Config{
+		ServiceName: "audit",
+		Port:        "8100",
+		DB:          dbConn,
+	})
+
+	store := NewAuditStore(dbConn)
 	srv := NewServer(store)
 
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
+	httpSrv.HandleFunc("/api/v1/audit", srv.corsMiddleware(srv.handleAuditRoute))
+	httpSrv.HandleFunc("/api/v1/audit/", srv.corsMiddleware(srv.handleAuditRoute))
 
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
-	})
-
-	http.HandleFunc("/api/v1/audit", srv.corsMiddleware(srv.handleAuditRoute))
-	http.HandleFunc("/api/v1/audit/", srv.corsMiddleware(srv.handleAuditRoute))
-
-	log.Printf("arcana-audit starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	httpSrv.ListenAndServe()
 }

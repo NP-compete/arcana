@@ -1,0 +1,13 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "arcana-codex-searcher.fullname" . }}
+  labels:
+    {{- include "arcana-codex-searcher.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "arcana-codex-searcher.selectorLabels" . | nindent 6 }}
+{{- end }}

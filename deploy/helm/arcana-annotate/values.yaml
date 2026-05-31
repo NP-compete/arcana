@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   registry: ""
-  repository: arcana-annotate
+  repository: localhost/arcana-annotate
   tag: dev
   pullPolicy: IfNotPresent
 
@@ -19,6 +19,7 @@ service:
 
 env:
   PORT: "8102"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger.arcana.svc.cluster.local:4318"
 
 probes:
   liveness: "/healthz"
@@ -31,3 +32,19 @@ resources:
   limits:
     memory: 128Mi
     cpu: 250m
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPU: 75
+  targetMemory: 80
+
+tls:
+  enabled: false
+  secretName: arcana-service-tls
+  mountPath: /etc/tls

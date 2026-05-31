@@ -7,12 +7,29 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: nginx
   rules:
-    - http:
+    - host: arcana.localhost.me
+      http:
         paths:
           - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: arcana-api
+                port:
+                  number: 8080
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: arcana-api
+                port:
+                  number: 8080
+          - path: /agents/
             pathType: Prefix
             backend:
               service:

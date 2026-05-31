@@ -1,0 +1,13 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "arcana-forge.fullname" . }}
+  labels:
+    {{- include "arcana-forge.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "arcana-forge.selectorLabels" . | nindent 6 }}
+{{- end }}

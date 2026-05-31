@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: arcana
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: arcana
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: warning-webhook
+      group_by: [alertname, service]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - receiver: critical-webhook
+          match:
+            severity: critical
+          group_wait: 10s
+          repeat_interval: 1h
+        - receiver: warning-webhook
+          match:
+            severity: warning
+
+    receivers:
+      - name: critical-webhook
+        webhook_configs:
+          - url: "http://arcana-api:8080/api/v1/webhooks/alerts/critical"
+            send_resolved: true
+      - name: warning-webhook
+        webhook_configs:
+          - url: "http://arcana-api:8080/api/v1/webhooks/alerts/warning"
+            send_resolved: true
+
+    inhibit_rules:
+      - source_match:
+          severity: critical
+        target_match:
+          severity: warning
+        equal: [alertname, service]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: arcana
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: arcana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+          ports:
+            - containerPort: 9093
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: data
+              mountPath: /alertmanager
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 250m
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: arcana
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: arcana
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager
+  ports:
+    - port: 9093
+      targetPort: http
+      name: http

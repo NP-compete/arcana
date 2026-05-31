@@ -11,4 +11,4 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY services/memory/app/ app/
 USER 65534:65534
 EXPOSE 8087
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8087"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8087", "--timeout-graceful-shutdown", "30"]

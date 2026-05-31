@@ -3,7 +3,15 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 )
+
+func corsOrigin() string {
+	if origin := os.Getenv("CORS_ORIGIN"); origin != "" {
+		return origin
+	}
+	return "http://arcana-api.arcana.svc.cluster.local:8080"
+}
 
 type Server struct {
 	store *ScorerStore
@@ -73,7 +81,7 @@ func (s *Server) handleSupersession(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Origin", corsOrigin())
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.WriteHeader(status)
@@ -86,7 +94,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", corsOrigin())
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {

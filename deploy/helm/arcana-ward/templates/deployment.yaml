@@ -15,6 +15,10 @@ spec:
         {{- include "arcana-ward.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "arcana-ward.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534
       containers:
         - name: ward
           image: {{ include "arcana-ward.image" . }}
@@ -28,6 +32,13 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+          {{- if .Values.envFromSecrets }}
+          envFrom:
+            {{- range .Values.envFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness | default "/healthz" }}
@@ -40,5 +51,23 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
+          {{- if .Values.tls.enabled }}
+          volumeMounts:
+            - name: tls-certs
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      {{- if .Values.tls.enabled }}
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: {{ .Values.tls.secretName }}
+      {{- end }}

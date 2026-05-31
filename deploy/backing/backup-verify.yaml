@@ -1,0 +1,93 @@
+# Weekly backup verification — restores latest backup to temp DB and validates
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: arcana-backup-verify
+  namespace: arcana
+  labels:
+    app.kubernetes.io/name: backup-verify
+    app.kubernetes.io/part-of: arcana
+spec:
+  schedule: "0 4 * * 0"  # Weekly on Sunday at 4 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: verify
+              image: postgres:16-alpine
+              env:
+                - name: PGHOST
+                  value: postgres.arcana.svc.cluster.local
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: arcana-platform-secret
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: arcana-platform-secret
+                      key: POSTGRES_PASSWORD
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "=== Backup Verification ==="
+
+                  LATEST=$(ls -t /backups/*.sql.gz 2>/dev/null | head -1)
+                  if [ -z "$LATEST" ]; then
+                    echo "FAIL: No backups found"
+                    exit 1
+                  fi
+                  echo "Latest backup: $LATEST"
+                  echo "Size: $(du -h "$LATEST" | cut -f1)"
+
+                  # Create temp database
+                  TEMP_DB="arcana_verify_$(date +%s)"
+                  createdb "$TEMP_DB"
+
+                  # Restore backup
+                  echo "Restoring to $TEMP_DB..."
+                  gunzip -c "$LATEST" | psql -d "$TEMP_DB" -q 2>/dev/null
+
+                  # Validate tables exist
+                  TABLE_COUNT=$(psql -d "$TEMP_DB" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")
+                  echo "Tables restored: $TABLE_COUNT"
+
+                  if [ "$TABLE_COUNT" -lt 1 ]; then
+                    echo "FAIL: No tables restored"
+                    dropdb "$TEMP_DB"
+                    exit 1
+                  fi
+
+                  # Validate row counts
+                  for table in agents api_keys audit_log tenants; do
+                    COUNT=$(psql -d "$TEMP_DB" -t -c "SELECT count(*) FROM $table" 2>/dev/null || echo "N/A")
+                    echo "  $table: $COUNT rows"
+                  done
+
+                  # Cleanup
+                  dropdb "$TEMP_DB"
+                  echo "PASS: Backup verification successful"
+              volumeMounts:
+                - name: backup-data
+                  mountPath: /backups
+                  readOnly: true
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                limits:
+                  memory: 256Mi
+                  cpu: 200m
+          volumes:
+            - name: backup-data
+              persistentVolumeClaim:
+                claimName: arcana-backup-data

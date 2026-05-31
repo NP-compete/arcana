@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/arcana
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          # Go services
+          - { name: engine, dockerfile: cmd/engine/Dockerfile }
+          - { name: operator, dockerfile: cmd/operator/Dockerfile }
+          - { name: mesh, dockerfile: cmd/mesh/Dockerfile }
+          - { name: api, dockerfile: cmd/api/Dockerfile }
+          - { name: agui, dockerfile: cmd/agui/Dockerfile }
+          - { name: blueprint, dockerfile: cmd/blueprint/Dockerfile }
+          - { name: oracle, dockerfile: cmd/oracle/Dockerfile }
+          - { name: codex-router, dockerfile: cmd/codex-router/Dockerfile }
+          - { name: codex-searcher, dockerfile: cmd/codex-searcher/Dockerfile }
+          - { name: codex-ingestor, dockerfile: cmd/codex-ingestor/Dockerfile }
+          - { name: codex-scorer, dockerfile: cmd/codex-scorer/Dockerfile }
+          - { name: tools, dockerfile: cmd/tools/Dockerfile }
+          - { name: sandbox, dockerfile: cmd/sandbox/Dockerfile }
+          - { name: audit, dockerfile: cmd/audit/Dockerfile }
+          - { name: scheduler, dockerfile: cmd/scheduler/Dockerfile }
+          - { name: registry, dockerfile: cmd/registry/Dockerfile }
+          - { name: finops, dockerfile: cmd/finops/Dockerfile }
+          - { name: gitops, dockerfile: cmd/gitops/Dockerfile }
+          # Python services
+          - { name: skills, dockerfile: services/skills/Dockerfile }
+          - { name: ward, dockerfile: services/ward/Dockerfile }
+          - { name: memory, dockerfile: services/memory/Dockerfile }
+          - { name: connectors, dockerfile: services/connectors/Dockerfile }
+          - { name: graph, dockerfile: services/graph/Dockerfile }
+          - { name: forge, dockerfile: services/forge/Dockerfile }
+          - { name: models, dockerfile: services/models/Dockerfile }
+          - { name: probe, dockerfile: services/probe/Dockerfile }
+          - { name: annotate, dockerfile: services/annotate/Dockerfile }
+          # TypeScript
+          - { name: studio, dockerfile: services/studio/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        run: |
+          cosign sign --yes ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service.name }}
+          path: sbom-${{ matrix.service.name }}.spdx.json

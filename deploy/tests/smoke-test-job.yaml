@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: arcana-smoke-test
+  namespace: arcana
+  labels:
+    app.kubernetes.io/part-of: arcana
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: smoke-test
+          image: curlimages/curl:8.5.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              FAILED=0
+              check() {
+                status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$1" 2>/dev/null || echo "000")
+                if [ "$status" = "200" ]; then
+                  echo "PASS $2 ($status)"
+                else
+                  echo "FAIL $2 (got $status)"
+                  FAILED=$((FAILED + 1))
+                fi
+              }
+
+              echo "=== Arcana In-Cluster Smoke Test ==="
+
+              for svc in api:8080 engine:8081 operator:8082 mesh:8083 agui:8084 skills:8085 ward:8086 memory:8087 blueprint:8088 oracle:8089 codex-router:8090 codex-searcher:8091 codex-ingestor:8092 codex-scorer:8093 connectors:8094 graph:8095 tools:8096 sandbox:8097 forge:8098 models:8099 audit:8100 probe:8101 annotate:8102 scheduler:8103 registry:8104 finops:8105 gitops:8106; do
+                name="${svc%%:*}"
+                port="${svc##*:}"
+                check "http://arcana-${name}.arcana.svc.cluster.local:${port}/healthz" "${name}"
+              done
+
+              echo ""
+              if [ "$FAILED" -gt 0 ]; then
+                echo "FAILED: $FAILED services unhealthy"
+                exit 1
+              fi
+              echo "ALL SERVICES HEALTHY"
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
+              cpu: 100m

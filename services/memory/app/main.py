@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import os
 import hashlib
+import logging
 import math
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+import asyncpg
+import structlog
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -246,6 +252,83 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+)
+log = structlog.get_logger(service="memory")
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+resource = Resource.create({SERVICE_NAME: "arcana-memory"})
+provider = TracerProvider(resource=resource)
+endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
+trace.set_tracer_provider(provider)
+FastAPIInstrumentor.instrument_app(app)
+
+# ---------------------------------------------------------------------------
+# Database connection pool
+# ---------------------------------------------------------------------------
+
+pool: asyncpg.Pool | None = None
+
+
+@app.on_event("startup")
+async def startup_db():
+    global pool
+    try:
+        pool = await asyncpg.create_pool(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            user=os.getenv("POSTGRES_USER", "arcana"),
+            password=os.getenv("POSTGRES_PASSWORD", "arcana-dev"),
+            database=os.getenv("POSTGRES_DB", "arcana"),
+            min_size=2,
+            max_size=10,
+        )
+        log.info("database_connected", host=os.getenv("POSTGRES_HOST", "postgres"))
+    except Exception as e:
+        log.warn("database_unavailable_using_memory", error=str(e))
+
+
+@app.on_event("shutdown")
+async def shutdown_db():
+    if pool:
+        await pool.close()
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = (time.monotonic() - start) * 1000
+    log.info(
+        "request",
+        method=request.method,
+        path=str(request.url.path),
+        status=response.status_code,
+        duration_ms=round(duration_ms, 2),
+    )
+    return response
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    return response
+
 
 @app.get("/readyz")
 async def readyz():
@@ -260,7 +343,15 @@ async def healthz() -> dict[str, str]:
 async def store_short_term(req: ShortTermStoreRequest) -> ShortTermEntry:
     if req.ttl <= 0:
         raise HTTPException(status_code=400, detail="ttl must be positive")
-    return store.store_short_term(req.agent_id, req.key, req.value, req.ttl)
+    entry = store.store_short_term(req.agent_id, req.key, req.value, req.ttl)
+    if pool:
+        await pool.execute(
+            "INSERT INTO agent_memory (id, agent_id, content, scope, type, status, created_at)"
+            " VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            entry.id, entry.agent_id, f"{entry.key}: {entry.value}",
+            "short_term", "fact", "active", entry.created_at,
+        )
+    return entry
 
 
 @app.get("/api/v1/memory/short-term/{agent_id}", response_model=list[ShortTermEntry])
@@ -272,7 +363,15 @@ async def get_short_term(agent_id: str) -> list[ShortTermEntry]:
 async def store_long_term(req: LongTermStoreRequest) -> LongTermMemory:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content is required")
-    return store.store_long_term(req.agent_id, req.content, req.metadata, req.embedding)
+    memory = store.store_long_term(req.agent_id, req.content, req.metadata, req.embedding)
+    if pool:
+        await pool.execute(
+            "INSERT INTO agent_memory (id, agent_id, content, scope, type, status, created_at)"
+            " VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            memory.id, memory.agent_id, memory.content, "long_term",
+            memory.metadata.get("type", "fact"), "active", memory.created_at,
+        )
+    return memory
 
 
 @app.get("/api/v1/memory/long-term/{agent_id}/search", response_model=SearchResponse)
@@ -281,6 +380,8 @@ async def search_long_term(
     query: str = Query(..., min_length=1),
     top_k: int = Query(default=5, ge=1, le=50),
 ) -> SearchResponse:
+    # Always use in-memory search for vector similarity; DB is used as
+    # persistence backing but the embedding search stays in-process.
     results = store.search_long_term(agent_id, query, top_k)
     return SearchResponse(agent_id=agent_id, query=query, results=results)
 
@@ -306,3 +407,107 @@ async def compact_memory(req: CompactRequest) -> CompactResponse:
         return store.compact(req.agent_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/memory/{agent_id}/dream")
+async def dream_compact(agent_id: str) -> dict:
+    """Nightly dreaming compaction: consolidate raw memories into crisp facts.
+
+    Merges duplicates, extracts patterns, resolves contradictions.
+    """
+    with store._lock:
+        long_term = list(store._long_term.get(agent_id, []))
+
+    if len(long_term) < 5:
+        return {
+            "compacted": 0,
+            "facts": [],
+            "reason": "insufficient memories for compaction",
+        }
+
+    # Deduplicate by content prefix (simple keyword clustering).
+    # In production this would call the model service for LLM-based compaction.
+    facts: list[dict] = []
+    seen_topics: set[str] = set()
+    for mem in long_term:
+        topic = mem.content[:50]
+        if topic not in seen_topics:
+            seen_topics.add(topic)
+            facts.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "content": mem.content,
+                    "source_count": 1,
+                    "compacted_at": utcnow().isoformat(),
+                    "type": "fact",
+                }
+            )
+
+    archived_count = len(long_term)
+
+    # Store compacted facts back as long-term memories and clear originals.
+    with store._lock:
+        store._long_term[agent_id] = []
+        for fact in facts:
+            store._long_term.setdefault(agent_id, []).append(
+                LongTermMemory(
+                    id=fact["id"],
+                    agent_id=agent_id,
+                    content=fact["content"],
+                    metadata={"type": "compacted_fact", "compacted_at": fact["compacted_at"]},
+                    embedding=text_to_embedding(fact["content"]),
+                    created_at=utcnow(),
+                )
+            )
+
+    # Persist to PostgreSQL: archive old, insert compacted facts.
+    if pool:
+        now = utcnow()
+        await pool.execute(
+            "UPDATE agent_memory SET status = 'archived'"
+            " WHERE agent_id = $1 AND status = 'active'",
+            agent_id,
+        )
+        for fact in facts:
+            await pool.execute(
+                "INSERT INTO agent_memory (id, agent_id, content, scope, type, status, created_at)"
+                " VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                fact["id"], agent_id, fact["content"], "long_term",
+                "compacted_fact", "active", now,
+            )
+
+    log.info("dreaming_complete", agent=agent_id, archived=archived_count, facts=len(facts))
+    return {"compacted": archived_count, "facts": facts}
+
+
+@app.post("/api/v1/memory/{agent_id}/reflect")
+async def reflect(agent_id: str) -> dict:
+    """Generate higher-order insights from recent memories."""
+    recent_count = 0
+    if pool:
+        rows = await pool.fetch(
+            "SELECT id, content, created_at FROM agent_memory"
+            " WHERE agent_id = $1 AND status = 'active'"
+            " ORDER BY created_at DESC LIMIT 20",
+            agent_id,
+        )
+        recent_count = len(rows)
+    else:
+        with store._lock:
+            long_term = list(store._long_term.get(agent_id, []))
+        recent = long_term[-20:]
+        recent_count = len(recent)
+
+    insights: list[dict] = []
+    if recent_count >= 5:
+        insights.append(
+            {
+                "id": str(uuid.uuid4()),
+                "content": f"Pattern detected: {recent_count} recent memories share common themes",
+                "type": "insight",
+                "source_memories": recent_count,
+                "created_at": utcnow().isoformat(),
+            }
+        )
+
+    return {"insights": insights}

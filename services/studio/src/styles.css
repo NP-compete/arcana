@@ -7,6 +7,21 @@
   --arcana-red: #f56565;
   --arcana-orange: #ed8936;
   --arcana-cyan: #4fd1c5;
+
+  /* Theme tokens — dark (default) */
+  --arcana-bg: #0f1117;
+  --arcana-bg-secondary: #161822;
+  --arcana-card-bg: rgba(255,255,255,0.04);
+  --arcana-card-border: rgba(255,255,255,0.08);
+  --arcana-text: #e2e8f0;
+  --arcana-text-secondary: #8b95a5;
+  --arcana-text-muted: #5a6272;
+  --arcana-border: rgba(255,255,255,0.08);
+  --arcana-sidebar-bg: #12141e;
+  --arcana-input-bg: rgba(255,255,255,0.06);
+  --arcana-hover-bg: rgba(255,255,255,0.06);
+  --arcana-hero-bg: linear-gradient(135deg, #1a1d2e 0%, #0d2137 50%, #1a1035 100%);
+  --arcana-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
 .arcana-masthead {
@@ -342,4 +357,417 @@
 /* Smooth page background */
 .pf-v6-c-page__main-section {
   background: var(--pf-t--global--background--color--secondary--default) !important;
+}
+
+/* Floating chat FAB */
+.arcana-chat-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--arcana-gradient);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4), 0 2px 6px rgba(0,0,0,0.15);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.arcana-chat-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 24px rgba(102, 126, 234, 0.5), 0 4px 10px rgba(0,0,0,0.2);
+}
+
+.arcana-chat-fab:active {
+  transform: scale(0.95);
+}
+
+/* Chat overlay panel */
+.arcana-chat-overlay {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 10000;
+  width: 420px;
+  height: 600px;
+  max-height: calc(100vh - 48px);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.2), 0 4px 16px rgba(0,0,0,0.1);
+  animation: chat-slide-up 0.25s ease-out;
+}
+
+.arcana-chat-overlay .pf-chatbot {
+  height: 100% !important;
+  border-radius: 16px;
+}
+
+@keyframes chat-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 480px) {
+  .arcana-chat-overlay {
+    width: calc(100vw - 16px);
+    right: 8px;
+    bottom: 8px;
+    height: calc(100vh - 80px);
+    border-radius: 12px;
+  }
+}
+
+.agent-chat-embedded {
+  height: 500px;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-chat-embedded .pf-chatbot {
+  height: 100% !important;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.agent-chat-fullpage {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  background: var(--pf-t--global--background--color--primary--default, #fff);
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-chat-fullpage .pf-chatbot {
+  height: 100% !important;
+  max-height: 100vh !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.agent-chat-back {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--pf-t--global--text--color--regular);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.agent-chat-back:hover {
+  background: var(--pf-t--global--background--color--secondary--default, rgba(0,0,0,0.06));
+}
+
+/* ===== Flow Builder ===== */
+
+.flow-sidebar {
+  width: 200px;
+  background: #161822;
+  border-right: 1px solid #2d3348;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.flow-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 4px 8px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  cursor: grab;
+  font-size: 13px;
+  font-weight: 600;
+  color: #c5cdd8;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+
+.flow-palette-item:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.flow-palette-item:active {
+  cursor: grabbing;
+  background: rgba(255,255,255,0.1);
+}
+
+/* Custom flow nodes */
+.flow-node {
+  background: #1e2130;
+  border: 1px solid #2d3348;
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 160px;
+  max-width: 220px;
+  color: #e2e8f0;
+  font-size: 12px;
+  transition: box-shadow 0.15s ease;
+}
+
+.flow-node:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.flow-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.flow-node-icon {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+
+.flow-node-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.flow-node-summary {
+  font-size: 11px;
+  color: #8b95a5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Node type accent overrides (via border-left set inline) */
+.flow-node-agent { }
+.flow-node-tool { }
+.flow-node-condition { }
+.flow-node-hitl { }
+.flow-node-rag { }
+.flow-node-code { }
+
+/* Properties panel */
+.flow-properties {
+  width: 280px;
+  background: #161822;
+  border-left: 1px solid #2d3348;
+  padding: 16px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* Toolbar */
+.flow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1e2130;
+  border: 1px solid #2d3348;
+  border-radius: 10px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+
+/* React Flow overrides for dark theme */
+.react-flow__attribution {
+  display: none !important;
+}
+
+.react-flow__controls-button {
+  background: #1e2130 !important;
+  border-color: #2d3348 !important;
+  color: #c5cdd8 !important;
+  fill: #c5cdd8 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #2d3348 !important;
+}
+
+/* ===== Marketplace ===== */
+
+.marketplace-card {
+  background: #1a1d2e !important;
+  border: 1px solid #2d3348 !important;
+  border-radius: 12px !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.marketplace-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25) !important;
+  border-color: #4a5568 !important;
+}
+
+/* ===== Platform Chat Page ===== */
+
+.platform-chat-page {
+  height: 100%;
+  min-height: calc(100vh - 76px);
+  display: flex;
+  flex-direction: column;
+}
+
+.platform-chat-page .pf-chatbot {
+  height: 100% !important;
+  max-height: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.platform-chat-page .pf-chatbot__content {
+  flex: 1;
+  min-height: 0;
+}
+
+.platform-chat-page .pf-v6-c-drawer {
+  height: 100%;
+  min-height: calc(100vh - 76px);
+}
+
+.platform-chat-page .pf-v6-c-drawer__content {
+  height: 100%;
+}
+
+.platform-chat-page .pf-v6-c-drawer__panel {
+  background: #161822;
+}
+
+.platform-chat-page .pf-v6-c-drawer__panel-main {
+  background: #161822;
+}
+
+/* ===== Light Theme Overrides ===== */
+
+[data-theme="light"] {
+  --arcana-bg: #f0f2f5;
+  --arcana-bg-secondary: #ffffff;
+  --arcana-card-bg: #ffffff;
+  --arcana-card-border: #d2d2d2;
+  --arcana-text: #1a1d2e;
+  --arcana-text-secondary: #4a5568;
+  --arcana-text-muted: #718096;
+  --arcana-border: #e2e8f0;
+  --arcana-sidebar-bg: #ffffff;
+  --arcana-input-bg: #f7fafc;
+  --arcana-hover-bg: rgba(0,0,0,0.04);
+  --arcana-hero-bg: linear-gradient(135deg, #e8ecf4 0%, #d4dff0 50%, #e4ddf0 100%);
+  --arcana-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* PatternFly overrides for light theme */
+[data-theme="light"] .pf-v6-c-page {
+  --pf-v6-c-page--BackgroundColor: var(--arcana-bg) !important;
+  background-color: var(--arcana-bg) !important;
+}
+
+[data-theme="light"] .pf-v6-c-page__sidebar {
+  --pf-v6-c-page__sidebar--BackgroundColor: var(--arcana-sidebar-bg) !important;
+  background-color: var(--arcana-sidebar-bg) !important;
+  border-right: 1px solid var(--arcana-border);
+}
+
+[data-theme="light"] .pf-v6-c-nav__link {
+  color: var(--arcana-text) !important;
+}
+
+[data-theme="light"] .pf-v6-c-nav__item.pf-m-current .pf-v6-c-nav__link {
+  background-color: rgba(102, 126, 234, 0.1) !important;
+  color: var(--arcana-indigo) !important;
+}
+
+[data-theme="light"] .pf-v6-c-card {
+  --pf-v6-c-card--BackgroundColor: var(--arcana-card-bg) !important;
+  background-color: var(--arcana-card-bg) !important;
+  border: 1px solid var(--arcana-card-border) !important;
+  box-shadow: var(--arcana-shadow) !important;
+}
+
+[data-theme="light"] .pf-v6-c-table {
+  --pf-v6-c-table--BackgroundColor: var(--arcana-card-bg) !important;
+  background-color: var(--arcana-card-bg) !important;
+}
+
+[data-theme="light"] .pf-v6-c-table tr {
+  border-color: var(--arcana-border) !important;
+}
+
+[data-theme="light"] .pf-v6-c-page__main-section {
+  background-color: var(--arcana-bg) !important;
+}
+
+[data-theme="light"] .pf-v6-c-title,
+[data-theme="light"] .pf-v6-c-content h1,
+[data-theme="light"] .pf-v6-c-content h2,
+[data-theme="light"] .pf-v6-c-content h3 {
+  color: var(--arcana-text) !important;
+}
+
+[data-theme="light"] .pf-v6-c-form-control input,
+[data-theme="light"] .pf-v6-c-form-control textarea,
+[data-theme="light"] .pf-v6-c-form-control select {
+  background-color: var(--arcana-input-bg) !important;
+  border-color: var(--arcana-border) !important;
+  color: var(--arcana-text) !important;
+}
+
+[data-theme="light"] .pf-v6-c-modal-box {
+  background-color: var(--arcana-card-bg) !important;
+}
+
+/* Flow builder light overrides */
+[data-theme="light"] .flow-node {
+  background: var(--arcana-card-bg) !important;
+  border-color: var(--arcana-card-border) !important;
+  color: var(--arcana-text) !important;
+}
+
+[data-theme="light"] .flow-sidebar {
+  background: var(--arcana-sidebar-bg) !important;
+  border-color: var(--arcana-border) !important;
+}
+
+[data-theme="light"] .flow-properties {
+  background: var(--arcana-sidebar-bg) !important;
+  border-color: var(--arcana-border) !important;
+}
+
+[data-theme="light"] .react-flow__background {
+  background: var(--arcana-bg) !important;
+}
+
+/* Marketplace light overrides */
+[data-theme="light"] .marketplace-card {
+  border-color: var(--arcana-card-border) !important;
+}
+
+/* Chat panel light overrides */
+[data-theme="light"] .platform-chat-page {
+  background: var(--arcana-bg) !important;
+}
+
+[data-theme="light"] .platform-chat-page .pf-v6-c-drawer__panel-main {
+  background: var(--arcana-sidebar-bg) !important;
 }
