@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the feature you'd like to see in Arcana.
+  - type: dropdown
+    id: plane
+    attributes:
+      label: Architecture plane
+      description: Which plane does this feature belong to?
+      options:
+        - Interact (Studio, AG-UI)
+        - Agent (Engine, Operator, Mesh)
+        - Data / Tool (Skills, Codex, MCP)
+        - Govern (Ward, OPA, Budget)
+        - Ops (API, Temporal, NATS)
+        - Cross-cutting
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature solve?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should this work? Include CRD examples if applicable.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider?

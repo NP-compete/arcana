@@ -1,0 +1,93 @@
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaAgent
+metadata:
+  name: planner
+  namespace: research
+  labels:
+    arcana.io/team: research-team
+    arcana.io/role: coordinator
+spec:
+  model: claude-sonnet-4-20250514
+  skills:
+    - task-decomposition
+    - delegation
+  memory:
+    backend: pgvector
+    ttl: 48h
+  budget:
+    maxTokensPerTurn: 4000
+    routingStrategy: fixed
+  sandbox:
+    runtime: none
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaAgent
+metadata:
+  name: researcher
+  namespace: research
+  labels:
+    arcana.io/team: research-team
+    arcana.io/role: worker
+spec:
+  model: gpt-4o
+  skills:
+    - web-search
+    - document-analysis
+    - data-extraction
+  memory:
+    backend: pgvector
+    ttl: 72h
+  budget:
+    maxTokensPerTurn: 8000
+    routingStrategy: baar
+  sandbox:
+    runtime: gvisor
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaAgent
+metadata:
+  name: writer
+  namespace: research
+  labels:
+    arcana.io/team: research-team
+    arcana.io/role: worker
+spec:
+  model: claude-sonnet-4-20250514
+  skills:
+    - long-form-writing
+    - citation-formatting
+    - summarization
+  memory:
+    backend: redis
+    ttl: 24h
+  budget:
+    maxTokensPerTurn: 16000
+    routingStrategy: fixed
+  sandbox:
+    runtime: none
+---
+# A2A mesh routes messages between agents in the team.
+# The planner delegates subtasks to researcher and writer,
+# who communicate results back through the mesh.
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaBlueprint
+metadata:
+  name: research-team
+  namespace: research
+spec:
+  description: "Three-agent research team: planner decomposes tasks, researcher gathers data, writer produces reports"
+  agents:
+    - ref: planner
+      role: coordinator
+    - ref: researcher
+      role: worker
+    - ref: writer
+      role: worker
+  routing:
+    protocol: a2a
+    topology: hub-and-spoke
+    hub: planner
+  workflow:
+    engine: temporal
+    timeout: 30m
+    retries: 2

@@ -1,0 +1,138 @@
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaTenant
+metadata:
+  name: acme-corp
+spec:
+  namespaces:
+    - engineering
+    - support
+    - research
+  quotas:
+    maxAgents: 20
+    maxTokensPerDay: 5000000
+    maxCostPerMonth: 500.00
+  isolation:
+    networkPolicy: strict
+    resourceQuota:
+      cpu: "16"
+      memory: 32Gi
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaBudget
+metadata:
+  name: team-budget
+  namespace: engineering
+spec:
+  scope: namespace
+  limits:
+    maxTokensPerDay: 1000000
+    maxCostPerMonth: 200.00
+  routing:
+    strategy: baar
+    tiers:
+      - name: fast
+        model: claude-haiku-4-5-20251001
+        maxComplexity: 0.3
+      - name: standard
+        model: claude-sonnet-4-20250514
+        maxComplexity: 0.7
+      - name: complex
+        model: claude-opus-4-20250514
+        maxComplexity: 1.0
+  alerts:
+    - threshold: 50
+      channel: slack
+      message: "50% of monthly budget consumed"
+    - threshold: 80
+      channel: slack
+      message: "80% of monthly budget consumed — review agent usage"
+    - threshold: 95
+      channel: pagerduty
+      message: "Budget nearly exhausted — agents will be throttled at 100%"
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaEvalSuite
+metadata:
+  name: agent-quality-gates
+  namespace: engineering
+spec:
+  agent: code-reviewer
+  trigger: on-promotion
+  metrics:
+    - name: task-completion
+      type: binary
+      description: "Agent successfully completes the assigned review task"
+      threshold: 0.95
+      action: block
+    - name: hallucination-rate
+      type: llm-judge
+      description: "Agent does not fabricate code issues that don't exist"
+      threshold: 0.02
+      action: block
+    - name: tool-call-accuracy
+      type: exact-match
+      description: "Agent calls the correct tools with valid arguments"
+      threshold: 0.90
+      action: warn
+    - name: response-latency-p99
+      type: numeric
+      description: "99th percentile response time under 30 seconds"
+      threshold: 30000
+      unit: ms
+      action: warn
+  dataset:
+    ref: code-review-golden-set
+    minSamples: 100
+  schedule: "0 3 * * *"
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaPromotion
+metadata:
+  name: code-reviewer-v2
+  namespace: engineering
+spec:
+  agent: code-reviewer
+  source:
+    environment: dev
+    version: "2.1.0"
+  target:
+    environment: staging
+  gates:
+    - evalSuite: agent-quality-gates
+      required: true
+    - approval:
+        team: platform-engineering
+        minApprovers: 1
+  rollback:
+    automatic: true
+    trigger: error-budget-exhausted
+    window: 1h
+---
+apiVersion: arcana.io/v1alpha1
+kind: ArcanaExperiment
+metadata:
+  name: model-comparison
+  namespace: engineering
+spec:
+  agent: code-reviewer
+  variants:
+    - name: control
+      weight: 50
+      config:
+        model: claude-sonnet-4-20250514
+    - name: treatment
+      weight: 50
+      config:
+        model: gpt-4o
+  metrics:
+    - name: task-completion
+      type: binary
+    - name: response-latency-p50
+      type: numeric
+    - name: user-satisfaction
+      type: likert
+  duration: 7d
+  significance: 0.05
+  earlyStop:
+    enabled: true
+    minSamples: 200

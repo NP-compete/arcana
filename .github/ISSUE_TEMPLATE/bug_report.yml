@@ -1,0 +1,53 @@
+name: Bug Report
+description: Report a bug in Arcana
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill in the details below.
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: Which service or CRD is affected?
+      placeholder: "e.g., arcana-engine, ArcanaAgent CRD, arcana-studio"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `kubectl get crd arcanaagents.arcana.io -o jsonpath='{.metadata.labels.app\.kubernetes\.io/version}'`
+      placeholder: "v0.1.0"
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Container runtime
+      options:
+        - Docker
+        - Podman
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant logs (kubectl logs, make dev-status output)
+      render: shell
