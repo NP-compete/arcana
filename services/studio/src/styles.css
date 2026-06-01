@@ -60,16 +60,7 @@
   letter-spacing: -0.3px;
 }
 
-.arcana-logo-badge {
-  font-size: 10px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.85);
-  background: rgba(255,255,255,0.15);
-  padding: 2px 8px;
-  border-radius: 10px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
+/* Logo badge removed — clean wordmark only */
 
 .arcana-env-badge {
   background: rgba(255,255,255,0.15) !important;
@@ -289,6 +280,49 @@
   margin: 2px 8px !important;
 }
 
+.arcana-sidebar-footer {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding: 8px 8px;
+  margin-top: auto;
+}
+
+.arcana-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--arcana-text-secondary, #8b95a5);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-align: left;
+}
+
+.arcana-settings-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--arcana-text, #e2e8f0);
+}
+
+.arcana-settings-btn.active {
+  background: rgba(91,141,239,0.1);
+  color: #5b8def;
+}
+
+.arcana-nav-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #4a5568;
+  padding: 16px 20px 6px;
+  user-select: none;
+}
+
 /* Section titles */
 .section-title {
   font-size: 14px;
@@ -406,6 +440,31 @@
 .arcana-chat-overlay .pf-chatbot {
   height: 100% !important;
   border-radius: 16px;
+}
+
+/* Typing dots */
+.arcana-typing-dots {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  height: 20px;
+}
+
+.arcana-typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--arcana-text-muted);
+  animation: arcana-dot-bounce 1.4s infinite ease-in-out both;
+}
+
+.arcana-typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.arcana-typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+.arcana-typing-dots span:nth-child(3) { animation-delay: 0s; }
+
+@keyframes arcana-dot-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
 }
 
 @keyframes chat-slide-up {

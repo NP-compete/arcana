@@ -161,7 +161,7 @@ export const OrgChartPage = () => {
     try {
       const [agentsRes, teamsRes] = await Promise.allSettled([
         fetch("/api/v1/agents"),
-        fetch("/api/v1/finops/teams"),
+        fetch("/api/v1/costs/teams"),
       ]);
 
       if (agentsRes.status === "fulfilled" && agentsRes.value.ok) {

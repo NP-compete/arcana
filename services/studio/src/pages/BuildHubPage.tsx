@@ -64,11 +64,11 @@ const PACKAGE_CARDS: {
   color: string;
   desc: string;
 }[] = [
-  { kind: "agent", label: "Create Agent", icon: <RobotIcon />, color: "#3b82f6", desc: "Deploy an AI agent with custom skills and tools" },
-  { kind: "skill", label: "Create Skill", icon: <CubesIcon />, color: "#a855f7", desc: "Build a reusable capability for agents" },
-  { kind: "model", label: "Create Model", icon: <BrainIcon />, color: "#22c55e", desc: "Register an LLM provider and model" },
-  { kind: "mcp", label: "Create MCP Server", icon: <CodeIcon />, color: "#06b6d4", desc: "Connect external tools via MCP" },
-  { kind: "subagent", label: "Create Subagent", icon: <UsersIcon />, color: "#f97316", desc: "Build a specialized agent as a tool" },
+  { kind: "agent", label: "Deploy Agent", icon: <RobotIcon />, color: "#3b82f6", desc: "Name it, pick a model, add skills, deploy" },
+  { kind: "skill", label: "Add Skill", icon: <CubesIcon />, color: "#a855f7", desc: "Build a reusable capability for agents" },
+  { kind: "model", label: "Register Model", icon: <BrainIcon />, color: "#22c55e", desc: "Connect an LLM provider" },
+  { kind: "mcp", label: "Connect MCP", icon: <CodeIcon />, color: "#06b6d4", desc: "Plug in external tools via MCP" },
+  { kind: "subagent", label: "Add Subagent", icon: <UsersIcon />, color: "#f97316", desc: "Create a specialist agent as a tool" },
 ];
 
 const PROVIDERS = [
@@ -120,10 +120,9 @@ export const BuildHubPage = () => {
     <>
       <PageSection hasBodyWrapper={false}>
         <div style={{ textAlign: "center", padding: "40px 0 24px" }}>
-          <Title headingLevel="h1" size="2xl">Build something amazing</Title>
+          <Title headingLevel="h1" size="2xl">New deployment</Title>
           <Content component="p" style={{ marginTop: 8, maxWidth: 520, margin: "8px auto 0", color: "var(--pf-t--global--text--color--subtle)" }}>
-            Create agents, skills, models, and MCP servers from a single hub.
-            Choose a package type below to get started.
+            Deploy an agent, register a skill or model, or connect an MCP server.
           </Content>
         </div>
       </PageSection>
@@ -841,7 +840,7 @@ const ModelWizard = ({ onClose }: { onClose: () => void }) => {
 const GenericWizard = ({ kind, onClose }: { kind: "mcp" | "subagent"; onClose: () => void }) => {
   const isMcp = kind === "mcp";
   const title = isMcp ? "Register MCP Server" : "Create Subagent";
-  const endpoint = isMcp ? "/api/v1/mcp" : "/api/v1/agents/register";
+  const endpoint = isMcp ? "/api/v1/tools" : "/api/v1/agents/register";
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

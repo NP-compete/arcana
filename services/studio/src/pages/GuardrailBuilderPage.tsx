@@ -190,6 +190,7 @@ const ruleTypeLabel = (type: string): string => {
 
 const configSummary = (rule: GuardrailRule): string => {
   const c = rule.config;
+  if (!c) return "—";
   switch (rule.type) {
     case "pii": {
       const p = c as PiiConfig;
@@ -291,7 +292,7 @@ export const GuardrailBuilderPage = () => {
     setLoading(true);
     setSaveMessage(null);
     try {
-      const res = await fetch(`/api/v1/ward/agents/${encodeURIComponent(selectedAgent)}/rules`);
+      const res = await fetch(`/api/v1/rules/agent/${encodeURIComponent(selectedAgent)}`);
       if (res.ok) {
         const data = await res.json();
         setRules(data.rules ?? []);
@@ -315,7 +316,7 @@ export const GuardrailBuilderPage = () => {
     setSaving(true);
     setSaveMessage(null);
     try {
-      const res = await fetch(`/api/v1/ward/agents/${encodeURIComponent(selectedAgent)}/rules`, {
+      const res = await fetch(`/api/v1/rules/agent/${encodeURIComponent(selectedAgent)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rules }),
@@ -338,7 +339,7 @@ export const GuardrailBuilderPage = () => {
     setTestRunning(true);
     setTestResults(null);
     try {
-      const res = await fetch("/api/v1/ward/evaluate", {
+      const res = await fetch("/api/v1/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input: testInput, rules }),

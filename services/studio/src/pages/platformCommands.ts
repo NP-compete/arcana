@@ -155,7 +155,7 @@ export async function executePlatformCommand(
 
     case "show_costs": {
       try {
-        const res = await fetch("/api/v1/finops/summary", { headers });
+        const res = await fetch("/api/v1/costs", { headers });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const total = data.total_cost ?? data.totalCost ?? "N/A";

@@ -74,14 +74,18 @@ export const ModelsPage = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [modelsRes, budgetRes] = await Promise.all([
+      const [modelsRes, budgetRes] = await Promise.allSettled([
         fetch("/api/v1/models"),
         fetch("/api/v1/budget"),
       ]);
-      const modelsData = await modelsRes.json();
-      const budgetData = await budgetRes.json();
-      setModels(modelsData.models || []);
-      setBudget(budgetData);
+      if (modelsRes.status === "fulfilled" && modelsRes.value.ok) {
+        const data = await modelsRes.value.json();
+        setModels(data.models || []);
+      }
+      if (budgetRes.status === "fulfilled" && budgetRes.value.ok) {
+        const data = await budgetRes.value.json();
+        setBudget(data);
+      }
     } catch {
       setError("Failed to load models data");
     } finally {
