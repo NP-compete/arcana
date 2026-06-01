@@ -164,6 +164,18 @@ func (k *K8sClient) CreateNetworkPolicy(namespace, name string) error {
 						}},
 					},
 				},
+				{
+					"from": []map[string]interface{}{
+						{"namespaceSelector": map[string]interface{}{
+							"matchLabels": map[string]string{
+								"app.kubernetes.io/name": "ingress-nginx",
+							},
+						}},
+					},
+					"ports": []map[string]interface{}{
+						{"protocol": "TCP", "port": 5002},
+					},
+				},
 			},
 			"egress": []map[string]interface{}{
 				{
@@ -315,6 +327,59 @@ func (k *K8sClient) CreateService(namespace, name string, port int, targetPort i
 	}
 	if code >= 300 {
 		return fmt.Errorf("create service: HTTP %d", code)
+	}
+	return nil
+}
+
+func (k *K8sClient) CreateIngress(namespace, name, host, serviceName string, servicePort int) error {
+	ing := map[string]interface{}{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "Ingress",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+			"annotations": map[string]string{
+				"nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+				"nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+				"nginx.ingress.kubernetes.io/proxy-buffering":    "off",
+				"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
+			},
+		},
+		"spec": map[string]interface{}{
+			"ingressClassName": "nginx",
+			"rules": []map[string]interface{}{
+				{
+					"host": host,
+					"http": map[string]interface{}{
+						"paths": []map[string]interface{}{
+							{
+								"path":     "/",
+								"pathType": "Prefix",
+								"backend": map[string]interface{}{
+									"service": map[string]interface{}{
+										"name": serviceName,
+										"port": map[string]interface{}{
+											"number": servicePort,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, code, err := k.do("POST",
+		fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/ingresses", namespace), ing)
+	if err != nil {
+		return err
+	}
+	if code == 409 {
+		return nil
+	}
+	if code >= 300 {
+		return fmt.Errorf("create ingress: HTTP %d", code)
 	}
 	return nil
 }

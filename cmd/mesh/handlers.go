@@ -171,6 +171,17 @@ func (s *Server) provisionAgentNamespace(agent *MeshAgent) {
 		s.provisionDeepAgentPod(ns, agent)
 	}
 
+	baseDomain := os.Getenv("ARCANA_BASE_DOMAIN")
+	if baseDomain == "" {
+		baseDomain = "arcana.localhost.me"
+	}
+	agentHost := agent.Name + "." + baseDomain
+	if err := s.k8s.CreateIngress(ns, "agent-ingress", agentHost, "deep-agent", 5002); err != nil {
+		log.Printf("failed to create ingress in %s: %v", ns, err)
+	} else {
+		log.Printf("ingress created: %s → deep-agent:5002 in %s", agentHost, ns)
+	}
+
 	log.Printf("agent %s fully provisioned in namespace %s", agent.Name, ns)
 }
 
