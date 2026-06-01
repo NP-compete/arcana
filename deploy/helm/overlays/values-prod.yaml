@@ -24,5 +24,13 @@ pdb:
   minAvailable: 2
 
 env:
-  ARCANA_ENV: "production"
+  ARCANA_ENV: production
   LOG_LEVEL: "warn"
+  AUTH_MODE: jwt
+  DB_MODE: cnpg
+  POSTGRES_SSLMODE: require
+  CORS_ORIGINS: https://arcana.example.com
+
+tls:
+  enabled: true
+  secretName: arcana-service-tls

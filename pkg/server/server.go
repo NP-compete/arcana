@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,17 +28,18 @@ type contextKey string
 const RequestIDKey contextKey = "request_id"
 
 type Config struct {
-	ServiceName    string
-	Port           string
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-	IdleTimeout    time.Duration
-	MaxHeaderBytes int
-	MaxBodyBytes   int64
-	DrainTimeout   time.Duration
-	DB             *sql.DB
-	TLSCertFile    string
-	TLSKeyFile     string
+	ServiceName        string
+	Port               string
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	IdleTimeout        time.Duration
+	MaxHeaderBytes     int
+	MaxBodyBytes       int64
+	DrainTimeout       time.Duration
+	DB                 *sql.DB
+	TLSCertFile        string
+	TLSKeyFile         string
+	RateLimitPerSecond int
 }
 
 func (c *Config) defaults() {
@@ -68,6 +72,9 @@ func (c *Config) defaults() {
 	}
 	if c.TLSKeyFile == "" {
 		c.TLSKeyFile = os.Getenv("TLS_KEY_FILE")
+	}
+	if c.RateLimitPerSecond == 0 {
+		c.RateLimitPerSecond = 100
 	}
 }
 
@@ -170,6 +177,7 @@ func (s *Server) buildMiddlewareChain(handler http.Handler) http.Handler {
 	h = s.requestLoggingMiddleware(h)
 	h = s.tracingMiddleware(h)
 	h = s.requestIDMiddleware(h)
+	h = s.rateLimitMiddleware(h)
 	h = s.bodySizeLimitMiddleware(h)
 	h = s.recoveryMiddleware(h)
 	h = s.securityHeadersMiddleware(h)
@@ -260,6 +268,84 @@ func (s *Server) bodySizeLimitMiddleware(next http.Handler) http.Handler {
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type tokenBucket struct {
+	tokens   float64
+	max      float64
+	rate     float64
+	lastTime time.Time
+	mu       sync.Mutex
+}
+
+func (tb *tokenBucket) allow() bool {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(tb.lastTime).Seconds()
+	tb.tokens = math.Min(tb.max, tb.tokens+elapsed*tb.rate)
+	tb.lastTime = now
+
+	if tb.tokens < 1 {
+		return false
+	}
+	tb.tokens--
+	return true
+}
+
+func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
+	if s.cfg.RateLimitPerSecond < 0 {
+		return next
+	}
+
+	rate := float64(s.cfg.RateLimitPerSecond)
+	buckets := &sync.Map{}
+
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-2 * time.Minute)
+			buckets.Range(func(key, value interface{}) bool {
+				tb := value.(*tokenBucket)
+				tb.mu.Lock()
+				idle := tb.lastTime.Before(cutoff)
+				tb.mu.Unlock()
+				if idle {
+					buckets.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ip = r.RemoteAddr
+		}
+
+		val, _ := buckets.LoadOrStore(ip, &tokenBucket{
+			tokens:   rate,
+			max:      rate,
+			rate:     rate,
+			lastTime: time.Now(),
+		})
+		tb := val.(*tokenBucket)
+
+		if !tb.allow() {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "rate limit exceeded",
+			})
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }

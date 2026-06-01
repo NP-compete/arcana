@@ -1,24 +1,40 @@
 from __future__ import annotations
 
+import json
 import os
-import hashlib
+import sys
 import logging
 import threading
 import time
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import asyncpg
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from _shared.auth import require_auth
+from _shared.embeddings import embed_text, cosine_similarity
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
+
 
 app = FastAPI(title="Arcana Annotate", version="0.1.0", description="Annotation loop")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -116,21 +132,77 @@ _store_lock = threading.Lock()
 _annotations: dict[str, Annotation] = {}
 _CRYSTALLIZATION_THRESHOLD = 3
 
+# ---------------------------------------------------------------------------
+# Database connection pool
+# ---------------------------------------------------------------------------
 
-def _simple_embedding(text: str) -> list[float]:
-    h = hashlib.sha256(text.encode()).digest()
-    return [b / 255.0 for b in h[:16]]
+pool: asyncpg.Pool | None = None
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(x * x for x in b) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
+@app.on_event("startup")
+async def startup_db():
+    global pool
+    password = os.getenv("POSTGRES_PASSWORD", "" if os.getenv("ARCANA_ENV") == "production" else "arcana-dev")
+    if not password:
+        raise RuntimeError("POSTGRES_PASSWORD required in production")
+    try:
+        pool = await asyncpg.create_pool(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            user=os.getenv("POSTGRES_USER", "arcana"),
+            password=password,
+            database=os.getenv("POSTGRES_DB", "arcana"),
+            min_size=2,
+            max_size=10,
+        )
+        log.info("database_connected", host=os.getenv("POSTGRES_HOST", "postgres"))
+
+        # Ensure the annotations table exists
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS annotations (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    agent_id TEXT,
+                    user_id TEXT,
+                    topic TEXT,
+                    question TEXT NOT NULL,
+                    original_answer TEXT NOT NULL,
+                    corrected_answer TEXT NOT NULL,
+                    embedding REAL[],
+                    crystallized BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+
+        # Hydrate in-memory cache from database
+        rows = await pool.fetch(
+            "SELECT id, agent_id, user_id, topic, question, original_answer,"
+            " corrected_answer, embedding, crystallized, created_at"
+            " FROM annotations ORDER BY created_at DESC"
+        )
+        for r in rows:
+            ann_id = str(r["id"])
+            _annotations[ann_id] = Annotation(
+                id=ann_id,
+                question=r["question"],
+                original=r["original_answer"],
+                corrected=r["corrected_answer"],
+                agent_id=r["agent_id"] or "",
+                user_id=r["user_id"] or "",
+                embedding=list(r["embedding"]) if r["embedding"] else [],
+                topic=r["topic"] or "general",
+                crystallized=r["crystallized"] or False,
+                created_at=r["created_at"],
+            )
+        log.info("annotations_cache_loaded", count=len(_annotations))
+    except Exception as e:
+        log.warn("database_unavailable_using_memory", error=str(e))
+
+
+@app.on_event("shutdown")
+async def shutdown_db():
+    if pool:
+        await pool.close()
 
 
 @app.get("/readyz")
@@ -143,9 +215,9 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/annotations", response_model=Annotation, status_code=201)
-async def submit_annotation(req: SubmitAnnotationRequest) -> Annotation:
+async def submit_annotation(req: SubmitAnnotationRequest, auth: dict = Depends(require_auth)) -> Annotation:
     ann_id = str(uuid.uuid4())
-    embedding = _simple_embedding(req.question + req.corrected_answer)
+    embedding = embed_text(req.question + " " + req.corrected_answer)
     ann = Annotation(
         id=ann_id,
         question=req.question,
@@ -156,13 +228,22 @@ async def submit_annotation(req: SubmitAnnotationRequest) -> Annotation:
         embedding=embedding,
         topic=req.topic,
     )
+    if pool:
+        await pool.execute(
+            "INSERT INTO annotations (id, agent_id, user_id, topic, question,"
+            " original_answer, corrected_answer, embedding)"
+            " VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            uuid.UUID(ann_id), req.agent_id, req.user_id, req.topic,
+            req.question, req.original_answer, req.corrected_answer, embedding,
+        )
     with _store_lock:
         _annotations[ann_id] = ann
     return ann
 
 
 @app.get("/api/v1/annotations")
-async def list_annotations(agent: str | None = None, topic: str | None = None) -> dict[str, Any]:
+async def list_annotations(agent: str | None = None, topic: str | None = None, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+    # Use in-memory cache (kept in sync with DB)
     with _store_lock:
         items = list(_annotations.values())
     if agent:
@@ -173,12 +254,14 @@ async def list_annotations(agent: str | None = None, topic: str | None = None) -
 
 
 @app.post("/api/v1/annotations/search")
-async def search_annotations(req: SearchRequest) -> dict[str, Any]:
-    query_emb = _simple_embedding(req.query)
+async def search_annotations(req: SearchRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+    query_emb = embed_text(req.query)
     matches = []
     with _store_lock:
         for ann in _annotations.values():
-            sim = _cosine_similarity(query_emb, ann.embedding)
+            if not ann.embedding:
+                continue
+            sim = cosine_similarity(query_emb, ann.embedding)
             if sim >= req.similarity_threshold:
                 matches.append({"annotation": ann, "similarity": round(sim, 4)})
     matches.sort(key=lambda m: m["similarity"], reverse=True)
@@ -186,7 +269,7 @@ async def search_annotations(req: SearchRequest) -> dict[str, Any]:
 
 
 @app.get("/api/v1/annotations/stats")
-async def annotation_stats() -> dict[str, Any]:
+async def annotation_stats(auth: dict = Depends(require_auth)) -> dict[str, Any]:
     with _store_lock:
         total = len(_annotations)
         crystallized_count = sum(1 for a in _annotations.values() if getattr(a, "crystallized", False))
@@ -226,7 +309,8 @@ async def annotation_stats() -> dict[str, Any]:
 
 
 @app.post("/api/v1/annotations/crystallize")
-async def crystallize(req: CrystallizeRequest) -> dict[str, Any]:
+async def crystallize(req: CrystallizeRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+    crystallized_ids: list[str] = []
     with _store_lock:
         grouped: dict[tuple[str, str], list[Annotation]] = defaultdict(list)
         for ann in _annotations.values():
@@ -252,6 +336,14 @@ async def crystallize(req: CrystallizeRequest) -> dict[str, Any]:
             # Mark annotations as crystallized
             for ann in anns:
                 ann.crystallized = True
+                crystallized_ids.append(ann.id)
+
+    # Persist crystallized status to database
+    if pool and crystallized_ids:
+        await pool.execute(
+            "UPDATE annotations SET crystallized = TRUE WHERE id = ANY($1::uuid[])",
+            [uuid.UUID(aid) for aid in crystallized_ids],
+        )
 
     if not crystallized:
         raise HTTPException(status_code=404, detail="no candidates meet crystallization threshold")

@@ -1,10 +1,11 @@
 module github.com/NP-compete/arcana/cmd/engine
 
-go 1.25.0
+go 1.23.0
 
 require (
 	github.com/NP-compete/arcana/pkg/db v0.0.0
 	github.com/NP-compete/arcana/pkg/server v0.0.0
+	github.com/NP-compete/arcana/pkg/temporal v0.0.0
 	github.com/google/uuid v1.6.0
 	go.temporal.io/sdk v1.31.0
 )
@@ -68,6 +69,7 @@ replace (
 	github.com/NP-compete/arcana/pkg/logger => ../../pkg/logger
 	github.com/NP-compete/arcana/pkg/metrics => ../../pkg/metrics
 	github.com/NP-compete/arcana/pkg/server => ../../pkg/server
+	github.com/NP-compete/arcana/pkg/temporal => ../../pkg/temporal
 	github.com/NP-compete/arcana/pkg/tracing => ../../pkg/tracing
 
 	// Pin the monolithic genproto to a post-split version to resolve

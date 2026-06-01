@@ -1,22 +1,42 @@
 from __future__ import annotations
 
 import os
+import sys
 import logging
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+try:
+    import anthropic as _anthropic_mod  # noqa: F401
+except ImportError:
+    _anthropic_mod = None  # type: ignore[assignment]
+
+import httpx
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from _shared.auth import require_auth
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
+
 
 app = FastAPI(title="Arcana Models", version="0.1.0", description="Model registry and serving")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -125,6 +145,103 @@ _budget_limit = 1000.0
 _fallback_chain = FallbackChain(models=["gpt-4o-mini", "llama-3-8b"], thresholds={"cost_per_token": 0.00001})
 
 
+class ModelRouter:
+    """Routes inference requests to the appropriate LLM backend."""
+
+    def __init__(self) -> None:
+        self._anthropic_client: Any = None
+        self._http_client: httpx.AsyncClient | None = None
+
+    async def predict(
+        self, model_name: str, model_info: dict[str, Any], input_text: str
+    ) -> tuple[str, int, int, float]:
+        """Returns (output, input_tokens, output_tokens, cost_usd)."""
+        provider = model_info.get("provider", "anthropic")
+        model_id = model_info.get("model_id", model_name)
+
+        if provider == "anthropic":
+            return await self._predict_anthropic(model_id, input_text)
+        elif provider in ("openai", "vllm"):
+            base_url = model_info.get("base_url") or os.getenv(
+                "OPENAI_BASE_URL", "https://api.openai.com/v1"
+            )
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            return await self._predict_openai_compat(
+                base_url, api_key, model_id, input_text
+            )
+        else:
+            raise ValueError(f"unsupported provider: {provider}")
+
+    async def _predict_anthropic(
+        self, model_id: str, input_text: str
+    ) -> tuple[str, int, int, float]:
+        if _anthropic_mod is None:
+            raise ImportError(
+                "anthropic package is required for provider='anthropic'. "
+                "Install with: pip install anthropic"
+            )
+        if not self._anthropic_client:
+            self._anthropic_client = _anthropic_mod.AsyncAnthropic()
+
+        response = await self._anthropic_client.messages.create(
+            model=model_id,
+            max_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "4096")),
+            messages=[{"role": "user", "content": input_text}],
+        )
+
+        output = response.content[0].text
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+
+        # Cost calculation (approximate, per 1M tokens)
+        cost_per_1m_input = {
+            "claude-sonnet-4-20250514": 3.0,
+            "claude-haiku-4-5-20251001": 0.80,
+        }.get(model_id, 3.0)
+        cost_per_1m_output = {
+            "claude-sonnet-4-20250514": 15.0,
+            "claude-haiku-4-5-20251001": 4.0,
+        }.get(model_id, 15.0)
+        cost = (
+            input_tokens * cost_per_1m_input + output_tokens * cost_per_1m_output
+        ) / 1_000_000
+
+        return output, input_tokens, output_tokens, cost
+
+    async def _predict_openai_compat(
+        self,
+        base_url: str,
+        api_key: str,
+        model_id: str,
+        input_text: str,
+    ) -> tuple[str, int, int, float]:
+        if not self._http_client:
+            self._http_client = httpx.AsyncClient(timeout=60.0)
+
+        resp = await self._http_client.post(
+            f"{base_url}/chat/completions",
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": input_text}],
+                "max_tokens": int(os.getenv("MAX_OUTPUT_TOKENS", "4096")),
+            },
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        output = data["choices"][0]["message"]["content"]
+        usage = data.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+        cost = (input_tokens + output_tokens) * 0.000003  # rough estimate
+
+        return output, input_tokens, output_tokens, cost
+
+
+_router = ModelRouter()
+
+
 @app.get("/readyz")
 async def readyz():
     return {"status": "ok"}
@@ -135,7 +252,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/models", response_model=ModelCard, status_code=201)
-async def register_model(req: RegisterModelRequest) -> ModelCard:
+async def register_model(req: RegisterModelRequest, auth: dict = Depends(require_auth)) -> ModelCard:
     with _store_lock:
         if req.name in _models:
             raise HTTPException(status_code=409, detail="model already registered")
@@ -153,14 +270,14 @@ async def register_model(req: RegisterModelRequest) -> ModelCard:
 
 
 @app.get("/api/v1/models")
-async def list_models() -> dict[str, Any]:
+async def list_models(auth: dict = Depends(require_auth)) -> dict[str, Any]:
     with _store_lock:
         models = list(_models.values())
     return {"models": models, "total": len(models)}
 
 
 @app.get("/api/v1/models/{name}", response_model=ModelCard)
-async def get_model(name: str) -> ModelCard:
+async def get_model(name: str, auth: dict = Depends(require_auth)) -> ModelCard:
     with _store_lock:
         card = _models.get(name)
     if not card:
@@ -169,7 +286,7 @@ async def get_model(name: str) -> ModelCard:
 
 
 @app.post("/api/v1/models/{name}/promote", response_model=ModelCard)
-async def promote_model(name: str, req: PromoteRequest) -> ModelCard:
+async def promote_model(name: str, req: PromoteRequest, auth: dict = Depends(require_auth)) -> ModelCard:
     with _store_lock:
         card = _models.get(name)
         if not card:
@@ -181,7 +298,7 @@ async def promote_model(name: str, req: PromoteRequest) -> ModelCard:
 
 
 @app.delete("/api/v1/models/{name}")
-async def deregister_model(name: str) -> dict[str, str]:
+async def deregister_model(name: str, auth: dict = Depends(require_auth)) -> dict[str, str]:
     with _store_lock:
         if name not in _models:
             raise HTTPException(status_code=404, detail="model not found")
@@ -190,32 +307,77 @@ async def deregister_model(name: str) -> dict[str, str]:
 
 
 @app.post("/api/v1/models/{name}/predict")
-async def predict(name: str, req: PredictRequest) -> dict[str, Any]:
+async def predict(name: str, req: PredictRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
     global _tokens_used, _cost
     with _store_lock:
         card = _models.get(name)
         if not card:
             raise HTTPException(status_code=404, detail="model not found")
+        model_serving = dict(card.serving)
 
     input_text = req.input if isinstance(req.input, str) else str(req.input)
-    tokens = max(1, len(input_text.split()) * 2)
-    cost = tokens * _fallback_chain.thresholds.get("cost_per_token", 0.00001)
+
+    # Check budget before inference
+    if _tokens_used >= _budget_limit:
+        # Try fallback chain
+        fallback_found = False
+        for fallback_name in _fallback_chain.models:
+            with _store_lock:
+                if fallback_name in _models:
+                    name = fallback_name
+                    card = _models[name]
+                    model_serving = dict(card.serving)
+                    fallback_found = True
+                    break
+        if not fallback_found:
+            raise HTTPException(
+                status_code=429,
+                detail="token budget exceeded and no fallback available",
+            )
+
+    try:
+        output, in_tok, out_tok, cost = await _router.predict(
+            name, model_serving, input_text
+        )
+    except Exception as e:
+        log.error("prediction_failed", model=name, error=str(e))
+        # Try fallback chain
+        output = None
+        in_tok = out_tok = 0
+        cost = 0.0
+        for fallback_name in _fallback_chain.models:
+            if fallback_name != name:
+                with _store_lock:
+                    fallback_card = _models.get(fallback_name)
+                if fallback_card:
+                    try:
+                        output, in_tok, out_tok, cost = await _router.predict(
+                            fallback_name, dict(fallback_card.serving), input_text
+                        )
+                        name = fallback_name
+                        break
+                    except Exception:
+                        continue
+        if output is None:
+            raise HTTPException(
+                status_code=502, detail=f"inference failed: {e}"
+            ) from e
 
     with _store_lock:
-        _tokens_used += tokens
+        _tokens_used += in_tok + out_tok
         _cost += cost
 
     return {
         "model": name,
-        "output": f"[{name}] Generated response for: {input_text[:200]}",
-        "tokens_used": tokens,
+        "output": output,
+        "tokens": {"input": in_tok, "output": out_tok, "total": in_tok + out_tok},
         "cost_usd": round(cost, 6),
-        "params": req.params,
+        "budget_remaining": max(0, _budget_limit - _tokens_used),
     }
 
 
 @app.get("/api/v1/budget", response_model=BudgetStatus)
-async def get_budget() -> BudgetStatus:
+async def get_budget(auth: dict = Depends(require_auth)) -> BudgetStatus:
     with _store_lock:
         return BudgetStatus(
             tokens_used=_tokens_used,
@@ -226,7 +388,7 @@ async def get_budget() -> BudgetStatus:
 
 
 @app.post("/api/v1/budget/fallback", response_model=FallbackChain)
-async def configure_fallback(req: FallbackConfigRequest) -> FallbackChain:
+async def configure_fallback(req: FallbackConfigRequest, auth: dict = Depends(require_auth)) -> FallbackChain:
     global _fallback_chain
     with _store_lock:
         _fallback_chain = FallbackChain(models=req.models, thresholds=req.thresholds)

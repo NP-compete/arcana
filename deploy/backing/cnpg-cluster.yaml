@@ -80,6 +80,26 @@ spec:
     reusePVC: true
 
 ---
+# =============================================================================
+# Database Credentials
+#
+# PRODUCTION WARNING: Do NOT use the default password below in production.
+# Instead, provision credentials via ExternalSecret (see external-secrets.yaml)
+# or inject via a CI/CD pipeline secret before applying this manifest.
+#
+# Option 1 — ExternalSecret (recommended):
+#   Replace this Secret with an ExternalSecret that references your
+#   secrets backend (Vault, AWS SM, etc.) under key "arcana/platform/postgres_password".
+#
+# Option 2 — CI/CD injection:
+#   Use `kubectl create secret` or Helm --set to inject credentials at deploy time:
+#     kubectl create secret generic arcana-db-credentials \
+#       --from-literal=username=arcana \
+#       --from-literal=password="$(openssl rand -base64 32)" \
+#       -n arcana
+#
+# The plaintext fallback below exists only for local/dev bootstrapping.
+# =============================================================================
 apiVersion: v1
 kind: Secret
 metadata:
@@ -90,4 +110,6 @@ metadata:
 type: kubernetes.io/basic-auth
 stringData:
   username: arcana
-  password: arcana-dev
+  # CHANGE_IN_PRODUCTION: This default password is for local development only.
+  # See the instructions above for production credential management.
+  password: "CHANGE-ME-USE-EXTERNAL-SECRET-IN-PRODUCTION"

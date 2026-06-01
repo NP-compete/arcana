@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import os
+import sys
 import logging
-import random
 import time
 import uuid
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import structlog
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from _shared.auth import require_auth
 
 
 class ConnectorType(StrEnum):
@@ -49,6 +55,150 @@ TIER1_CONNECTORS: list[dict[str, str]] = [
     {"type": ConnectorType.FILE, "description": "Local and network filesystem paths"},
 ]
 
+
+# ---------------------------------------------------------------------------
+# Connector plugin system
+# ---------------------------------------------------------------------------
+
+class ConnectorPlugin(ABC):
+    """Base class for data connectors."""
+
+    @abstractmethod
+    async def sync(self, config: dict) -> tuple[int, list[str]]:
+        """Sync data and return (doc_count, errors)."""
+        ...
+
+    @abstractmethod
+    async def health_check(self, config: dict) -> bool:
+        """Check connector health."""
+        ...
+
+
+class S3Connector(ConnectorPlugin):
+    async def sync(self, config: dict) -> tuple[int, list[str]]:
+        try:
+            import boto3
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=config.get("endpoint_url"),
+                aws_access_key_id=config.get("access_key"),
+                aws_secret_access_key=config.get("secret_key"),
+                region_name=config.get("region", "us-east-1"),
+            )
+            bucket = config.get("bucket", "")
+            prefix = config.get("prefix", "")
+
+            paginator = s3.get_paginator("list_objects_v2")
+            count = 0
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                count += len(page.get("Contents", []))
+            return count, []
+        except ImportError:
+            return 0, ["boto3 not installed"]
+        except Exception as e:
+            return 0, [str(e)]
+
+    async def health_check(self, config: dict) -> bool:
+        try:
+            import boto3
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=config.get("endpoint_url"),
+                aws_access_key_id=config.get("access_key"),
+                aws_secret_access_key=config.get("secret_key"),
+            )
+            s3.head_bucket(Bucket=config.get("bucket", ""))
+            return True
+        except Exception:
+            return False
+
+
+class PostgresConnector(ConnectorPlugin):
+    async def sync(self, config: dict) -> tuple[int, list[str]]:
+        try:
+            import asyncpg
+
+            conn = await asyncpg.connect(
+                host=config.get("host", "localhost"),
+                port=int(config.get("port", 5432)),
+                user=config.get("user", ""),
+                password=config.get("password", ""),
+                database=config.get("database", ""),
+            )
+            tables = await conn.fetch(
+                "SELECT schemaname, tablename FROM pg_tables "
+                "WHERE schemaname NOT IN ('pg_catalog', 'information_schema')"
+            )
+            total_rows = 0
+            for t in tables:
+                count = await conn.fetchval(
+                    f'SELECT COUNT(*) FROM "{t["schemaname"]}"."{t["tablename"]}"'
+                )
+                total_rows += count
+            await conn.close()
+            return total_rows, []
+        except Exception as e:
+            return 0, [str(e)]
+
+    async def health_check(self, config: dict) -> bool:
+        try:
+            import asyncpg
+
+            conn = await asyncpg.connect(
+                host=config.get("host"),
+                port=int(config.get("port", 5432)),
+                user=config.get("user"),
+                password=config.get("password"),
+                database=config.get("database"),
+            )
+            await conn.close()
+            return True
+        except Exception:
+            return False
+
+
+class WebConnector(ConnectorPlugin):
+    async def sync(self, config: dict) -> tuple[int, list[str]]:
+        try:
+            import httpx
+
+            urls = config.get("urls", [])
+            if isinstance(urls, str):
+                urls = [urls]
+            count = 0
+            errors: list[str] = []
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                for url in urls:
+                    try:
+                        resp = await http_client.get(url)
+                        if resp.status_code == 200:
+                            count += 1
+                        else:
+                            errors.append(f"{url}: HTTP {resp.status_code}")
+                    except Exception as e:
+                        errors.append(f"{url}: {e}")
+            return count, errors
+        except ImportError:
+            return 0, ["httpx not installed"]
+
+    async def health_check(self, config: dict) -> bool:
+        return True  # Web URLs are always "reachable" from our perspective
+
+
+_PLUGINS: dict[str, type[ConnectorPlugin]] = {
+    "s3": S3Connector,
+    "postgres": PostgresConnector,
+    "mysql": PostgresConnector,  # Similar pattern
+    "web": WebConnector,
+    "file": WebConnector,  # Placeholder
+}
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
 
 class ConnectorAuth(BaseModel):
     method: str = Field(description="Authentication method, e.g. oauth2, api_key, basic")
@@ -95,13 +245,11 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _simulate_sync(connector: ConnectorInstance) -> ConnectorInstance:
-    docs = random.randint(5, 50)
-    connector.documents_synced += docs
-    connector.last_sync = _now()
-    connector.status = "active"
-    _store[connector.name] = connector
-    return connector
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
 
 
 app = FastAPI(
@@ -112,7 +260,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -175,12 +323,12 @@ async def healthz() -> dict[str, str]:
 
 
 @app.get("/api/v1/connectors")
-async def list_connector_types() -> dict[str, Any]:
+async def list_connector_types(auth: dict = Depends(require_auth)) -> dict[str, Any]:
     return {"connectors": TIER1_CONNECTORS, "count": len(TIER1_CONNECTORS)}
 
 
 @app.post("/api/v1/connectors", status_code=201)
-async def register_connector(req: RegisterConnectorRequest) -> ConnectorInstance:
+async def register_connector(req: RegisterConnectorRequest, auth: dict = Depends(require_auth)) -> ConnectorInstance:
     if req.name in _store:
         raise HTTPException(status_code=409, detail=f"connector '{req.name}' already exists")
     instance = ConnectorInstance(
@@ -195,7 +343,7 @@ async def register_connector(req: RegisterConnectorRequest) -> ConnectorInstance
 
 
 @app.get("/api/v1/connectors/{name}")
-async def get_connector(name: str) -> ConnectorInstance:
+async def get_connector(name: str, auth: dict = Depends(require_auth)) -> ConnectorInstance:
     instance = _store.get(name)
     if instance is None:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
@@ -203,25 +351,48 @@ async def get_connector(name: str) -> ConnectorInstance:
 
 
 @app.post("/api/v1/connectors/{name}/sync")
-async def trigger_sync(name: str) -> SyncResult:
+async def trigger_sync(name: str, auth: dict = Depends(require_auth)) -> SyncResult:
     instance = _store.get(name)
     if instance is None:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
 
     started = _now()
-    updated = _simulate_sync(instance)
+
+    plugin_cls = _PLUGINS.get(instance.type)
+    if plugin_cls:
+        plugin = plugin_cls()
+        doc_count, errors = await plugin.sync(instance.config)
+        instance.documents_synced = doc_count
+        instance.last_sync = _now()
+        if errors:
+            instance.status = "error"
+            status = "error"
+            message = "; ".join(errors[:5])
+        else:
+            instance.status = "active"
+            status = "completed"
+            message = f"sync completed for {instance.type} connector"
+        _store[name] = instance
+    else:
+        # Unsupported connector type — keep existing behavior
+        instance.documents_synced = instance.documents_synced
+        instance.status = "unsupported"
+        status = "unsupported"
+        message = f"connector type '{instance.type}' has no plugin implementation"
+        _store[name] = instance
+
     return SyncResult(
         name=name,
-        status="completed",
-        documents_synced=updated.documents_synced,
+        status=status,
+        documents_synced=instance.documents_synced,
         started_at=started,
         completed_at=_now(),
-        message=f"sync completed for {updated.type} connector",
+        message=message,
     )
 
 
 @app.delete("/api/v1/connectors/{name}", status_code=204)
-async def remove_connector(name: str) -> Response:
+async def remove_connector(name: str, auth: dict = Depends(require_auth)) -> Response:
     if name not in _store:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
     del _store[name]
@@ -229,12 +400,18 @@ async def remove_connector(name: str) -> Response:
 
 
 @app.get("/api/v1/connectors/{name}/health")
-async def connector_health(name: str) -> ConnectorHealth:
+async def connector_health(name: str, auth: dict = Depends(require_auth)) -> ConnectorHealth:
     instance = _store.get(name)
     if instance is None:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
 
-    healthy = instance.status in {"registered", "active", "syncing"}
+    plugin_cls = _PLUGINS.get(instance.type)
+    if plugin_cls:
+        plugin = plugin_cls()
+        healthy = await plugin.health_check(instance.config)
+    else:
+        healthy = instance.status in {"registered", "active", "syncing"}
+
     return ConnectorHealth(
         name=name,
         healthy=healthy,
