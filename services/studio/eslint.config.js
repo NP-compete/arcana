@@ -1,0 +1,57 @@
+import js from "@eslint/js";
+
+export default [
+  js.configs.recommended,
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
+      globals: {
+        console: "readonly",
+        document: "readonly",
+        window: "readonly",
+        fetch: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        URLSearchParams: "readonly",
+        URL: "readonly",
+        FormData: "readonly",
+        AbortController: "readonly",
+        EventSource: "readonly",
+        localStorage: "readonly",
+        sessionStorage: "readonly",
+        navigator: "readonly",
+        history: "readonly",
+        location: "readonly",
+        HTMLElement: "readonly",
+        HTMLInputElement: "readonly",
+        HTMLTextAreaElement: "readonly",
+        HTMLSelectElement: "readonly",
+        MouseEvent: "readonly",
+        KeyboardEvent: "readonly",
+        Event: "readonly",
+        CustomEvent: "readonly",
+        Response: "readonly",
+        Request: "readonly",
+        Headers: "readonly",
+        RequestInit: "readonly",
+        globalThis: "readonly",
+        process: "readonly",
+        structuredClone: "readonly",
+      },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      "no-console": "off",
+    },
+  },
+  {
+    ignores: ["dist/", "node_modules/", "*.config.js", "*.config.ts"],
+  },
+];
