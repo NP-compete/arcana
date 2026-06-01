@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import logging
+import os
 import re
 import time
 import uuid
@@ -10,8 +10,14 @@ from enum import StrEnum
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
 
@@ -196,12 +202,6 @@ structlog.configure(
 )
 log = structlog.get_logger(service="graph")
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 resource = Resource.create({SERVICE_NAME: "arcana-graph"})
 provider = TracerProvider(resource=resource)
@@ -249,7 +249,7 @@ async def create_node(req: CreateNodeRequest) -> GraphNode:
 
 
 @app.get("/api/v1/nodes")
-async def list_nodes(type: NodeType | None = Query(default=None)) -> dict[str, Any]:
+async def list_nodes(type: NodeType | None = None) -> dict[str, Any]:
     nodes = list(_nodes.values())
     if type is not None:
         nodes = [n for n in nodes if n.type == type]
@@ -271,9 +271,9 @@ async def create_edge(req: CreateEdgeRequest) -> GraphEdge:
 
 @app.get("/api/v1/edges")
 async def list_edges(
-    type: EdgeType | None = Query(default=None),
-    from_id: str | None = Query(default=None),
-    to_id: str | None = Query(default=None),
+    type: EdgeType | None = None,
+    from_id: str | None = None,
+    to_id: str | None = None,
 ) -> dict[str, Any]:
     edges = list(_edges.values())
     if type is not None:
