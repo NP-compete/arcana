@@ -217,11 +217,11 @@ export const FinOpsDashboardPage = () => {
     setError(null);
     try {
       const [summaryRes, cotRes, cbmRes, taRes, buRes] = await Promise.allSettled([
-        fetch(`/api/v1/finops/summary?period=${period}`),
-        fetch(`/api/v1/finops/cost-over-time?period=${period}&team=${teamFilter}`),
-        fetch(`/api/v1/finops/cost-by-model?period=${period}`),
-        fetch(`/api/v1/finops/top-agents?period=${period}&limit=10`),
-        fetch("/api/v1/finops/budget-utilization"),
+        fetch(`/api/v1/costs?period=${period}`),
+        fetch(`/api/v1/costs/over-time?period=${period}&team=${teamFilter}`),
+        fetch(`/api/v1/costs/by-model?period=${period}`),
+        fetch(`/api/v1/costs/top-agents?period=${period}&limit=10`),
+        fetch("/api/v1/costs/budget-utilization"),
       ]);
 
       if (summaryRes.status === "fulfilled" && summaryRes.value.ok) {
@@ -289,7 +289,7 @@ export const FinOpsDashboardPage = () => {
       <PageSection hasBodyWrapper={false}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <Title headingLevel="h1" size="2xl">FinOps Dashboard</Title>
+            <Title headingLevel="h1" size="2xl">Usage & Costs</Title>
             <Content component="p" style={{ marginTop: 4 }}>
               Cost analytics, budget utilization, and model spend tracking.
             </Content>

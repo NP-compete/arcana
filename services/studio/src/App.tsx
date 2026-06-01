@@ -74,29 +74,38 @@ import { ThemeToggle } from "./components/ThemeToggle";
 interface NavEntry {
   path: string;
   label: string;
+  userLabel?: string;
   icon: React.ReactNode;
   allowedRoles: string[];
+  group?: string;
+  userGroup?: string;
 }
 
+const TECH_ROLES = new Set(["developer", "data-engineer", "sre", "auditor", "admin"]);
+
 const NAV_ITEMS: NavEntry[] = [
-  { path: "/", label: "Dashboard", icon: <HomeIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "auditor", "admin"] },
+  // Core
+  { path: "/", label: "Overview", userLabel: "Home", icon: <HomeIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "auditor", "admin"] },
+  { path: "/agents", label: "Agents", userLabel: "My Agents", icon: <RobotIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "admin"] },
   { path: "/chat", label: "Chat", icon: <CommentsIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "auditor", "admin"] },
-  { path: "/build", label: "Build Hub", icon: <PlusCircleIcon />, allowedRoles: ["developer", "admin"] },
-  { path: "/org-chart", label: "Org Chart", icon: <UsersIcon />, allowedRoles: ["admin", "sre"] },
-  { path: "/agents", label: "Agents", icon: <RobotIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "admin"] },
-  { path: "/connectors", label: "Connectors", icon: <PluggedIcon />, allowedRoles: ["developer", "data-engineer", "admin"] },
-  { path: "/mcp", label: "MCP Servers", icon: <CodeIcon />, allowedRoles: ["developer", "data-engineer", "admin"] },
-  { path: "/models", label: "Models", icon: <BrainIcon />, allowedRoles: ["developer", "data-engineer", "admin"] },
-  { path: "/skills", label: "Skills", icon: <CubesIcon />, allowedRoles: ["developer", "admin"] },
-  { path: "/flow-builder", label: "Flow Builder", icon: <ProjectDiagramIcon />, allowedRoles: ["developer", "admin"] },
-  { path: "/editor", label: "YAML Editor", icon: <EditIcon />, allowedRoles: ["developer", "admin"] },
-  { path: "/marketplace", label: "Marketplace", icon: <ShoppingCartIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "admin"] },
-  { path: "/evaluations", label: "Evaluations", icon: <ChartBarIcon />, allowedRoles: ["developer", "admin"] },
-  { path: "/guardrails", label: "Guardrails", icon: <ShieldAltIcon />, allowedRoles: ["admin", "developer"] },
-  { path: "/finops", label: "FinOps", icon: <MoneyBillIcon />, allowedRoles: ["admin", "sre"] },
-  { path: "/audit", label: "Audit", icon: <ClipboardCheckIcon />, allowedRoles: ["auditor", "admin"] },
-  { path: "/approvals", label: "Approvals", icon: <CheckCircleIcon />, allowedRoles: ["admin"] },
-  { path: "/settings", label: "Settings", icon: <CogIcon />, allowedRoles: ["sre", "auditor", "admin"] },
+
+  // Build
+  { path: "/build", label: "New Agent", icon: <PlusCircleIcon />, allowedRoles: ["developer", "admin"], group: "Build" },
+  { path: "/skills", label: "Skills", userLabel: "Capabilities", icon: <CubesIcon />, allowedRoles: ["developer", "admin"], group: "Build" },
+  { path: "/models", label: "Models", userLabel: "AI Models", icon: <BrainIcon />, allowedRoles: ["developer", "data-engineer", "admin"], group: "Build" },
+  { path: "/flow-builder", label: "Flows", userLabel: "Workflows", icon: <ProjectDiagramIcon />, allowedRoles: ["developer", "admin"], group: "Build" },
+  { path: "/mcp", label: "MCP Servers", userLabel: "Integrations", icon: <CodeIcon />, allowedRoles: ["developer", "data-engineer", "admin"], group: "Build" },
+  { path: "/connectors", label: "Connectors", userLabel: "Data Sources", icon: <PluggedIcon />, allowedRoles: ["developer", "data-engineer", "admin"], group: "Build" },
+
+  // Discover
+  { path: "/marketplace", label: "Marketplace", userLabel: "Browse & Install", icon: <ShoppingCartIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "admin"], group: "Discover" },
+
+  // Operate
+  { path: "/guardrails", label: "Guardrails", userLabel: "Safety Rules", icon: <ShieldAltIcon />, allowedRoles: ["admin", "developer"], group: "Operate" },
+  { path: "/evaluations", label: "Evaluations", userLabel: "Quality Checks", icon: <ChartBarIcon />, allowedRoles: ["developer", "admin"], group: "Operate" },
+  { path: "/finops", label: "Usage & Costs", icon: <MoneyBillIcon />, allowedRoles: ["admin", "sre"], group: "Operate" },
+  { path: "/audit", label: "Audit Log", userLabel: "Activity Log", icon: <ClipboardCheckIcon />, allowedRoles: ["auditor", "admin"], group: "Operate" },
+  { path: "/approvals", label: "Approvals", icon: <CheckCircleIcon />, allowedRoles: ["admin"], group: "Operate" },
 ];
 
 const ROLE_COLORS: Record<string, string> = {
@@ -113,6 +122,11 @@ const ShellLayout = () => {
   const location = useLocation();
   const { user, logout, hasRole } = useAuth();
   const [chatOpen, setChatOpen] = useState(false);
+
+  const isTechUser = user?.roles?.some((r) => TECH_ROLES.has(r)) ?? false;
+
+  const getLabel = (item: NavEntry) => isTechUser ? item.label : (item.userLabel ?? item.label);
+  const getGroup = (item: NavEntry) => isTechUser ? item.group : (item.userGroup ?? item.group);
 
   const visibleNav = NAV_ITEMS.filter((item) =>
     item.allowedRoles.some((r) => hasRole(r)),
@@ -145,7 +159,6 @@ const ShellLayout = () => {
                 >
                   <div className="arcana-logo-icon">A</div>
                   <span className="arcana-logo-text">Arcana</span>
-                  <span className="arcana-logo-badge">Studio</span>
                 </div>
               </MastheadBrand>
             </MastheadMain>
@@ -199,26 +212,63 @@ const ShellLayout = () => {
         }
         sidebar={
           <PageSidebar>
-            <PageSidebarBody>
+            <PageSidebarBody style={{ display: "flex", flexDirection: "column", height: "100%" }}>
               <Nav
                 onSelect={(_e, result) => {
                   const target = result.itemId as string;
                   if (target) navigate(target);
                 }}
+                style={{ flex: 1 }}
               >
                 <NavList>
-                  {visibleNav.map((item) => (
-                    <NavItem
-                      key={item.path}
-                      itemId={item.path}
-                      isActive={activeItem === item.path}
-                      icon={item.icon}
-                    >
-                      {item.label}
-                    </NavItem>
-                  ))}
+                  {(() => {
+                    const ungrouped = visibleNav.filter((item) => !getGroup(item));
+                    const groups = [...new Set(visibleNav.filter((item) => getGroup(item)).map((item) => getGroup(item)!))];
+                    return (
+                      <>
+                        {ungrouped.map((item) => (
+                          <NavItem
+                            key={item.path}
+                            itemId={item.path}
+                            isActive={activeItem === item.path}
+                            icon={item.icon}
+                          >
+                            {getLabel(item)}
+                          </NavItem>
+                        ))}
+                        {groups.map((group) => (
+                          <li key={group}>
+                            <div className="arcana-nav-group-label">{group}</div>
+                            {visibleNav
+                              .filter((item) => getGroup(item) === group)
+                              .map((item) => (
+                                <NavItem
+                                  key={item.path}
+                                  itemId={item.path}
+                                  isActive={activeItem === item.path}
+                                  icon={item.icon}
+                                >
+                                  {getLabel(item)}
+                                </NavItem>
+                              ))}
+                          </li>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </NavList>
               </Nav>
+              {hasRole("sre") || hasRole("auditor") || hasRole("admin") ? (
+                <div className="arcana-sidebar-footer">
+                  <button
+                    type="button"
+                    className={`arcana-settings-btn${activeItem === "/settings" ? " active" : ""}`}
+                    onClick={() => navigate("/settings")}
+                  >
+                    <CogIcon /> Settings
+                  </button>
+                </div>
+              ) : null}
             </PageSidebarBody>
           </PageSidebar>
         }

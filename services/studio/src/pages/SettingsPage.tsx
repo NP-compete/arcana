@@ -107,6 +107,15 @@ interface EnterpriseConfig {
   api_key_count: number;
   tenant_count: number;
   roles: string[];
+  sso_enabled?: boolean;
+  oidc_issuer?: string;
+  oidc_client_id?: string;
+  oidc_client_secret?: string;
+  oidc_redirect_uri?: string;
+  oidc_scopes?: string;
+  saml_entity_id?: string;
+  saml_sso_url?: string;
+  saml_certificate?: string;
 }
 
 const PlatformTab = () => (
@@ -172,6 +181,186 @@ const PlatformTab = () => (
   </Grid>
 );
 
+const SSOConfigTab = () => {
+  const [authMode, setAuthMode] = useState("open");
+  const [oidcIssuer, setOidcIssuer] = useState("");
+  const [oidcClientId, setOidcClientId] = useState("");
+  const [oidcClientSecret, setOidcClientSecret] = useState("");
+  const [oidcRedirectUri, setOidcRedirectUri] = useState("");
+  const [oidcScopes, setOidcScopes] = useState("openid profile email");
+  const [samlEntityId, setSamlEntityId] = useState("");
+  const [samlSsoUrl, setSamlSsoUrl] = useState("");
+  const [samlCertificate, setSamlCertificate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<{ type: "success" | "danger"; text: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/v1/enterprise/config")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data) {
+          setAuthMode(data.auth_mode ?? "open");
+          setOidcIssuer(data.oidc_issuer ?? "");
+          setOidcClientId(data.oidc_client_id ?? "");
+          setOidcClientSecret(data.oidc_client_secret ?? "");
+          setOidcRedirectUri(data.oidc_redirect_uri ?? "");
+          setOidcScopes(data.oidc_scopes ?? "openid profile email");
+          setSamlEntityId(data.saml_entity_id ?? "");
+          setSamlSsoUrl(data.saml_sso_url ?? "");
+          setSamlCertificate(data.saml_certificate ?? "");
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      const body: Record<string, unknown> = { auth_mode: authMode };
+      if (authMode === "oidc") {
+        body.oidc_issuer = oidcIssuer;
+        body.oidc_client_id = oidcClientId;
+        body.oidc_client_secret = oidcClientSecret;
+        body.oidc_redirect_uri = oidcRedirectUri;
+        body.oidc_scopes = oidcScopes;
+      } else if (authMode === "saml") {
+        body.saml_entity_id = samlEntityId;
+        body.saml_sso_url = samlSsoUrl;
+        body.saml_certificate = samlCertificate;
+      }
+      const res = await fetch("/api/v1/enterprise/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as Record<string, string>).error ?? `HTTP ${res.status}`);
+      }
+      setSaveResult({ type: "success", text: "SSO configuration saved. Changes take effect on next restart." });
+    } catch (e) {
+      setSaveResult({ type: "danger", text: e instanceof Error ? e.message : "Save failed" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <Spinner size="lg" />;
+
+  return (
+    <Card>
+      <CardTitle>Single Sign-On (SSO)</CardTitle>
+      <CardBody>
+        {saveResult && (
+          <Alert variant={saveResult.type} isInline title={saveResult.text} style={{ marginBottom: 16 }} />
+        )}
+        <Form>
+          <FormGroup label="Authentication Mode" fieldId="auth-mode">
+            <FormSelect
+              id="auth-mode"
+              value={authMode}
+              onChange={(_e, v) => setAuthMode(v)}
+              style={{ maxWidth: 300 }}
+            >
+              <FormSelectOption value="open" label="Open (no authentication)" />
+              <FormSelectOption value="api_key" label="API Key only" />
+              <FormSelectOption value="oidc" label="OIDC (OpenID Connect)" />
+              <FormSelectOption value="saml" label="SAML 2.0" />
+            </FormSelect>
+          </FormGroup>
+
+          {authMode === "oidc" && (
+            <>
+              <Divider style={{ margin: "16px 0" }} />
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>OIDC Configuration</div>
+              <FormGroup label="Issuer URL" isRequired fieldId="oidc-issuer">
+                <TextInput
+                  id="oidc-issuer"
+                  value={oidcIssuer}
+                  onChange={(_e, v) => setOidcIssuer(v)}
+                  placeholder="https://accounts.google.com"
+                />
+              </FormGroup>
+              <FormGroup label="Client ID" isRequired fieldId="oidc-client-id">
+                <TextInput
+                  id="oidc-client-id"
+                  value={oidcClientId}
+                  onChange={(_e, v) => setOidcClientId(v)}
+                  placeholder="your-client-id.apps.googleusercontent.com"
+                />
+              </FormGroup>
+              <FormGroup label="Client Secret" isRequired fieldId="oidc-client-secret">
+                <TextInput
+                  id="oidc-client-secret"
+                  type="password"
+                  value={oidcClientSecret}
+                  onChange={(_e, v) => setOidcClientSecret(v)}
+                  placeholder="your-client-secret"
+                />
+              </FormGroup>
+              <FormGroup label="Redirect URI" fieldId="oidc-redirect">
+                <TextInput
+                  id="oidc-redirect"
+                  value={oidcRedirectUri}
+                  onChange={(_e, v) => setOidcRedirectUri(v)}
+                  placeholder="https://arcana.example.com/auth/callback"
+                />
+              </FormGroup>
+              <FormGroup label="Scopes" fieldId="oidc-scopes">
+                <TextInput
+                  id="oidc-scopes"
+                  value={oidcScopes}
+                  onChange={(_e, v) => setOidcScopes(v)}
+                  placeholder="openid profile email"
+                />
+              </FormGroup>
+            </>
+          )}
+
+          {authMode === "saml" && (
+            <>
+              <Divider style={{ margin: "16px 0" }} />
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>SAML Configuration</div>
+              <FormGroup label="Entity ID" isRequired fieldId="saml-entity-id">
+                <TextInput
+                  id="saml-entity-id"
+                  value={samlEntityId}
+                  onChange={(_e, v) => setSamlEntityId(v)}
+                  placeholder="https://arcana.example.com"
+                />
+              </FormGroup>
+              <FormGroup label="SSO URL" isRequired fieldId="saml-sso-url">
+                <TextInput
+                  id="saml-sso-url"
+                  value={samlSsoUrl}
+                  onChange={(_e, v) => setSamlSsoUrl(v)}
+                  placeholder="https://idp.example.com/saml/sso"
+                />
+              </FormGroup>
+              <FormGroup label="IdP Certificate (PEM)" isRequired fieldId="saml-cert">
+                <TextInput
+                  id="saml-cert"
+                  value={samlCertificate}
+                  onChange={(_e, v) => setSamlCertificate(v)}
+                  placeholder="Paste PEM certificate or upload"
+                />
+              </FormGroup>
+            </>
+          )}
+
+          <div style={{ marginTop: 20 }}>
+            <Button variant="primary" onClick={handleSave} isLoading={saving} isDisabled={saving}>
+              Save Configuration
+            </Button>
+          </div>
+        </Form>
+      </CardBody>
+    </Card>
+  );
+};
+
 const SecurityTab = () => {
   const [config, setConfig] = useState<EnterpriseConfig | null>(null);
   const [keys, setKeys] = useState<APIKeyData[]>([]);
@@ -179,13 +368,13 @@ const SecurityTab = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [configRes, keysRes] = await Promise.all([
+      const [configRes, keysRes] = await Promise.allSettled([
         fetch("/api/v1/enterprise/config"),
         fetch("/api/v1/auth/keys"),
       ]);
-      if (configRes.ok) setConfig(await configRes.json());
-      if (keysRes.ok) {
-        const kd = await keysRes.json();
+      if (configRes.status === "fulfilled" && configRes.value.ok) setConfig(await configRes.value.json());
+      if (keysRes.status === "fulfilled" && keysRes.value.ok) {
+        const kd = await keysRes.value.json();
         setKeys(kd.keys ?? []);
       }
     } finally {
@@ -319,12 +508,12 @@ const AuditTab = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/v1/enterprise/audit").then(r => r.json()),
-      fetch("/api/v1/enterprise/audit/stats").then(r => r.json()),
-    ]).then(([auditData, statsData]) => {
-      setEntries(auditData.entries ?? []);
-      setStats(statsData);
+    Promise.allSettled([
+      fetch("/api/v1/enterprise/audit").then(r => r.ok ? r.json() : null),
+      fetch("/api/v1/enterprise/audit/stats").then(r => r.ok ? r.json() : null),
+    ]).then(([auditRes, statsRes]) => {
+      if (auditRes.status === "fulfilled" && auditRes.value) setEntries(auditRes.value.entries ?? []);
+      if (statsRes.status === "fulfilled" && statsRes.value) setStats(statsRes.value);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -758,19 +947,22 @@ export const SettingsPage = () => {
           <Tab eventKey={0} title={<TabTitleText>Platform</TabTitleText>}>
             <div style={{ marginTop: 16 }}><PlatformTab /></div>
           </Tab>
-          <Tab eventKey={1} title={<TabTitleText>RBAC</TabTitleText>}>
+          <Tab eventKey={1} title={<TabTitleText>SSO</TabTitleText>}>
+            <div style={{ marginTop: 16 }}><SSOConfigTab /></div>
+          </Tab>
+          <Tab eventKey={2} title={<TabTitleText>RBAC</TabTitleText>}>
             <div style={{ marginTop: 16 }}><RBACTab /></div>
           </Tab>
-          <Tab eventKey={2} title={<TabTitleText>Security & Auth</TabTitleText>}>
+          <Tab eventKey={3} title={<TabTitleText>API Keys</TabTitleText>}>
             <div style={{ marginTop: 16 }}><SecurityTab /></div>
           </Tab>
-          <Tab eventKey={3} title={<TabTitleText>Tenants</TabTitleText>}>
+          <Tab eventKey={4} title={<TabTitleText>Tenants</TabTitleText>}>
             <div style={{ marginTop: 16 }}><TenantsTab /></div>
           </Tab>
-          <Tab eventKey={4} title={<TabTitleText>Audit Log</TabTitleText>}>
+          <Tab eventKey={5} title={<TabTitleText>Audit Log</TabTitleText>}>
             <div style={{ marginTop: 16 }}><AuditTab /></div>
           </Tab>
-          <Tab eventKey={5} title={<TabTitleText>Compliance</TabTitleText>}>
+          <Tab eventKey={6} title={<TabTitleText>Compliance</TabTitleText>}>
             <div style={{ marginTop: 16 }}><ComplianceTab /></div>
           </Tab>
         </Tabs>

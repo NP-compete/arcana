@@ -150,7 +150,7 @@ export const ApprovalsPage = () => {
     try {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
-      const res = await fetch(`/api/v1/approvals?${params}`);
+      const res = await fetch(`/api/v1/promotions?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const fetched: ApprovalEntry[] = data.entries ?? data.approvals ?? [];
@@ -186,7 +186,7 @@ export const ApprovalsPage = () => {
     if (!reviewTarget) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/v1/approvals/${encodeURIComponent(reviewTarget.id)}/approve`, {
+      const res = await fetch(`/api/v1/promotions/${encodeURIComponent(reviewTarget.id)}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comment }),
@@ -210,7 +210,7 @@ export const ApprovalsPage = () => {
     if (!reviewTarget) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/v1/approvals/${encodeURIComponent(reviewTarget.id)}/reject`, {
+      const res = await fetch(`/api/v1/promotions/${encodeURIComponent(reviewTarget.id)}/reject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comment }),

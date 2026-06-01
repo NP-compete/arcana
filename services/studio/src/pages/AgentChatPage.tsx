@@ -1,31 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Chatbot, {
-  ChatbotDisplayMode,
-} from "@patternfly/chatbot/dist/dynamic/Chatbot";
-import ChatbotContent from "@patternfly/chatbot/dist/dynamic/ChatbotContent";
-import ChatbotWelcomePrompt from "@patternfly/chatbot/dist/dynamic/ChatbotWelcomePrompt";
-import ChatbotFooter, {
-  ChatbotFootnote,
-} from "@patternfly/chatbot/dist/dynamic/ChatbotFooter";
-import MessageBar from "@patternfly/chatbot/dist/dynamic/MessageBar";
-import MessageBox from "@patternfly/chatbot/dist/dynamic/MessageBox";
-import Message from "@patternfly/chatbot/dist/dynamic/Message";
-import ChatbotHeader, {
-  ChatbotHeaderMain,
-  ChatbotHeaderTitle,
-  ChatbotHeaderActions,
-} from "@patternfly/chatbot/dist/dynamic/ChatbotHeader";
-import {
-  Button,
-  Label,
-  Spinner,
-  Alert,
-} from "@patternfly/react-core";
-import {
-  ArrowLeftIcon,
-  InfoCircleIcon,
-} from "@patternfly/react-icons";
+import { Spinner, Alert, Label } from "@patternfly/react-core";
+import { ArrowLeftIcon } from "@patternfly/react-icons";
 
 interface ChatStep {
   type: "action" | "result" | "error";
@@ -48,13 +24,26 @@ interface AgentInfo {
   status: string;
 }
 
+const STATUS_LABEL: Record<string, string> = {
+  active: "Running",
+  busy: "Busy",
+  idle: "Sleeping",
+  offline: "Crashed",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  active: "#22c55e",
+  busy: "#f59e0b",
+  idle: "#8b95a5",
+  offline: "#ef4444",
+};
+
 function formatSteps(steps: ChatStep[]): string {
-  if (!steps || steps.length === 0) return "";
-  const lines = steps.map((s) => {
-    const icon = s.type === "action" ? "\u2699\ufe0f" : s.type === "result" ? "\u2705" : "\u274c";
+  if (!steps?.length) return "";
+  return "\n\n---\n" + steps.map((s) => {
+    const icon = s.type === "action" ? "⚙️" : s.type === "result" ? "✅" : "❌";
     return `${icon} **${s.service}** — ${s.message}`;
-  });
-  return "\n\n---\n" + lines.join("\n\n");
+  }).join("\n\n");
 }
 
 interface AgentChatPageProps {
@@ -67,17 +56,18 @@ export const AgentChatPage = ({ agentName }: AgentChatPageProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`/api/v1/agents/${agentName}`);
         if (!res.ok) throw new Error(`Agent not found (${res.status})`);
-        const data = await res.json();
-        setAgentInfo(data);
+        setAgentInfo(await res.json());
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load agent");
       } finally {
@@ -86,188 +76,215 @@ export const AgentChatPage = ({ agentName }: AgentChatPageProps) => {
     })();
   }, [agentName]);
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: "smooth" });
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isLoading]);
+  useEffect(() => { if (!loading && agentInfo) inputRef.current?.focus(); }, [loading, agentInfo]);
+
+  const send = useCallback(async (text: string) => {
+    if (!text.trim() || isLoading) return;
+    setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: "user", content: text, timestamp: new Date().toLocaleTimeString() }]);
+    setInput("");
+    setIsLoading(true);
+
+    try {
+      const payload: Record<string, string> = { message: text };
+      if (sessionId) payload.session_id = sessionId;
+      const res = await fetch(`/api/v1/agents/${agentName}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.session_id) setSessionId(data.session_id);
+      const reply = (data.reply ?? "Done.") + formatSteps(data.steps ?? []);
+      setMessages((prev) => [...prev, { id: `bot-${Date.now()}`, role: "bot", content: reply, steps: data.steps, timestamp: new Date().toLocaleTimeString() }]);
+    } catch {
+      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: "bot", content: "Could not reach the agent. Is the platform running?", timestamp: new Date().toLocaleTimeString() }]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [messages, isLoading]);
+  }, [isLoading, agentName, sessionId]);
 
-  const handleSend = useCallback(
-    async (message: string | number) => {
-      const text = String(message);
-      if (!text.trim() || isLoading) return;
-
-      const userMsg: ConversationMessage = {
-        id: `user-${Date.now()}`,
-        role: "user",
-        content: text,
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      setMessages((prev) => [...prev, userMsg]);
-      setIsLoading(true);
-
-      try {
-        const payload: Record<string, string> = { message: text };
-        if (sessionId) payload.session_id = sessionId;
-
-        const res = await fetch(`/api/v1/agents/${agentName}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (data.session_id) setSessionId(data.session_id);
-        const reply = (data.reply ?? "Done.") + formatSteps(data.steps ?? []);
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `bot-${Date.now()}`,
-            role: "bot",
-            content: reply,
-            steps: data.steps,
-            timestamp: new Date().toLocaleTimeString(),
-          },
-        ]);
-      } catch {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err-${Date.now()}`,
-            role: "bot",
-            content: "Sorry, I couldn't reach the agent. Is the platform running?",
-            timestamp: new Date().toLocaleTimeString(),
-          },
-        ]);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [isLoading, agentName, sessionId],
-  );
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); }
+  };
 
   if (loading) {
     return (
-      <div className="agent-chat-fullpage">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-          <Spinner size="xl" />
-        </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--arcana-bg)" }}>
+        <Spinner size="xl" />
       </div>
     );
   }
 
   if (error || !agentInfo) {
     return (
-      <div className="agent-chat-fullpage" style={{ padding: 32 }}>
-        <Button variant="link" icon={<ArrowLeftIcon />} onClick={() => navigate("/agents")}>
-          Back to Agents
-        </Button>
-        <Alert variant="danger" title="Agent not found" isInline style={{ marginTop: 16 }}>
-          {error}
-        </Alert>
+      <div style={{ padding: 32, background: "var(--arcana-bg)", minHeight: "100vh" }}>
+        <button type="button" onClick={() => navigate("/agents")} style={{
+          display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
+          color: "var(--arcana-text-secondary)", cursor: "pointer", fontSize: 14, marginBottom: 16,
+        }}>
+          <ArrowLeftIcon /> Back to Agents
+        </button>
+        <Alert variant="danger" title="Agent not found" isInline>{error}</Alert>
       </div>
     );
   }
 
-  const caps = agentInfo.capabilities?.join(", ") || "general";
+  const initial = agentName[0]?.toUpperCase() ?? "A";
+  const statusLabel = STATUS_LABEL[agentInfo.status] ?? agentInfo.status;
+  const statusColor = STATUS_COLOR[agentInfo.status] ?? "#8b95a5";
 
-  const prompts = [
-    { title: "Check status", message: "What's your current status?" },
-    { title: "Run a task", message: "Send the weekly newsletter to all subscribers" },
-    { title: "Search knowledge", message: "Search for brand guidelines" },
-    { title: "View costs", message: "How much have you spent so far?" },
-    { title: "List MCP tools", message: "What tools are available to you?" },
-    { title: "Guardrail check", message: "Is this content safe to send?" },
+  const SUGGESTIONS = [
+    { label: "Check status", msg: "What's your current status?" },
+    { label: "Run a task", msg: "Send the weekly newsletter to all subscribers" },
+    { label: "List tools", msg: "What tools are available to you?" },
+    { label: "View costs", msg: "How much have you spent so far?" },
   ];
 
   return (
-    <div className="agent-chat-fullpage">
-      <Chatbot displayMode={ChatbotDisplayMode.default}>
-        <ChatbotHeader>
-          <ChatbotHeaderMain>
-            <ChatbotHeaderTitle>
-              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button
-                  onClick={() => navigate(`/agents/${agentName}`)}
-                  className="agent-chat-back"
-                  aria-label="Back to agent detail"
-                >
-                  <ArrowLeftIcon />
-                </button>
-                <span
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 8,
-                    background: "var(--arcana-gradient, linear-gradient(135deg, #667eea, #764ba2))",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#fff",
-                    fontSize: 16,
-                    fontWeight: 800,
-                    flexShrink: 0,
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--arcana-bg)" }}>
+      {/* Header */}
+      <div style={{
+        padding: "12px 20px", borderBottom: "1px solid var(--arcana-card-border)",
+        display: "flex", alignItems: "center", gap: 12, background: "var(--arcana-bg-secondary)",
+      }}>
+        <button type="button" onClick={() => navigate(`/agents/${agentName}`)} style={{
+          background: "none", border: "none", cursor: "pointer", color: "var(--arcana-text-muted)", padding: 4,
+        }}>
+          <ArrowLeftIcon />
+        </button>
+        <div style={{
+          width: 30, height: 30, borderRadius: 8,
+          background: "linear-gradient(135deg, #5b8def, #a855f7)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#fff", fontSize: 14, fontWeight: 800,
+        }}>{initial}</div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--arcana-text)" }}>{agentName}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, display: "inline-block" }} />
+            <span style={{ fontSize: 11, color: "var(--arcana-text-muted)" }}>{statusLabel}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px 0" }}>
+        <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 24px" }}>
+          {messages.length === 0 && (
+            <div style={{ textAlign: "center", paddingTop: 60 }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: 14, margin: "0 auto 18px",
+                background: "linear-gradient(135deg, #5b8def, #a855f7)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: 24, fontWeight: 800,
+              }}>{initial}</div>
+              <h2 style={{ fontSize: 20, fontWeight: 600, color: "var(--arcana-text)", margin: "0 0 6px" }}>
+                Talk to {agentName}
+              </h2>
+              <p style={{ fontSize: 13, color: "var(--arcana-text-muted)", margin: "0 0 24px" }}>
+                Give it a task, ask a question, or explore what it can do.
+              </p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {SUGGESTIONS.map((s) => (
+                  <button key={s.label} type="button" onClick={() => send(s.msg)} style={{
+                    padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 500,
+                    border: "1px solid var(--arcana-card-border)", background: "var(--arcana-card-bg)",
+                    color: "var(--arcana-text-secondary)", cursor: "pointer", transition: "all 0.15s",
                   }}
-                >
-                  {agentName[0]?.toUpperCase()}
-                </span>
-                <span style={{ fontSize: 17, fontWeight: 700 }}>{agentName}</span>
-                <Label color="green" isCompact>{agentInfo.status}</Label>
-                <Label color="blue" isCompact>{caps}</Label>
-              </span>
-            </ChatbotHeaderTitle>
-          </ChatbotHeaderMain>
-          <ChatbotHeaderActions>
-            <Button
-              variant="plain"
-              aria-label="Agent details"
-              icon={<InfoCircleIcon />}
-              onClick={() => navigate(`/agents/${agentName}`)}
-            />
-          </ChatbotHeaderActions>
-        </ChatbotHeader>
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(91,141,239,0.4)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--arcana-card-border)"; }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-        <ChatbotContent>
-          <MessageBox>
-            {messages.length === 0 && (
-              <ChatbotWelcomePrompt
-                title={`Hello! I'm ${agentName}.`}
-                description={`I'm an AI agent with ${caps} capabilities. Give me a task, ask me a question, or explore what I can do.`}
-                prompts={prompts.map((p) => ({
-                  title: p.title,
-                  message: p.message,
-                  onClick: () => handleSend(p.message),
-                }))}
-              />
-            )}
+          {messages.map((msg) => (
+            <div key={msg.id} style={{
+              display: "flex", gap: 12, marginBottom: 20,
+              flexDirection: msg.role === "user" ? "row-reverse" : "row",
+            }}>
+              {msg.role === "bot" && (
+                <div style={{
+                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                  background: "linear-gradient(135deg, #5b8def, #a855f7)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: "#fff", fontSize: 12, fontWeight: 800, marginTop: 2,
+                }}>{initial}</div>
+              )}
+              <div style={{
+                maxWidth: "75%", padding: "12px 16px",
+                borderRadius: msg.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                background: msg.role === "user" ? "rgba(91,141,239,0.15)" : "var(--arcana-card-bg)",
+                border: msg.role === "user" ? "none" : "1px solid var(--arcana-card-border)",
+                color: "var(--arcana-text)", fontSize: 14, lineHeight: 1.6,
+                whiteSpace: "pre-wrap", wordBreak: "break-word",
+              }}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
 
-            {messages.map((msg) => (
-              <Message
-                key={msg.id}
-                role={msg.role}
-                content={msg.content}
-                name={msg.role === "user" ? "You" : agentName}
-                timestamp={msg.timestamp}
-              />
-            ))}
+          {isLoading && (
+            <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                background: "linear-gradient(135deg, #5b8def, #a855f7)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: 12, fontWeight: 800,
+              }}>{initial}</div>
+              <div style={{
+                padding: "12px 16px", borderRadius: "16px 16px 16px 4px",
+                background: "var(--arcana-card-bg)", border: "1px solid var(--arcana-card-border)",
+              }}>
+                <span className="arcana-typing-dots"><span /><span /><span /></span>
+              </div>
+            </div>
+          )}
 
-            {isLoading && (
-              <Message role="bot" name={agentName} content="Processing..." isLoading />
-            )}
+          <div ref={scrollRef} />
+        </div>
+      </div>
 
-            <div ref={scrollRef} />
-          </MessageBox>
-        </ChatbotContent>
-
-        <ChatbotFooter>
-          <MessageBar
-            onSendMessage={handleSend}
-            hasAttachButton={false}
-            hasMicrophoneButton={false}
+      {/* Input */}
+      <div style={{ padding: "16px 24px 20px", borderTop: "1px solid var(--arcana-card-border)", background: "var(--arcana-bg-secondary)" }}>
+        <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", gap: 10, alignItems: "flex-end" }}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={`Message ${agentName}...`}
+            rows={1}
+            style={{
+              flex: 1, padding: "12px 16px", borderRadius: 12, resize: "none",
+              border: "1px solid var(--arcana-card-border)", background: "var(--arcana-input-bg)",
+              color: "var(--arcana-text)", fontSize: 14, lineHeight: 1.5,
+              outline: "none", fontFamily: "inherit", minHeight: 44, maxHeight: 120,
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(91,141,239,0.5)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--arcana-card-border)"; }}
           />
-          <ChatbotFootnote label={`Talking to ${agentName} in namespace arcana-agent-${agentName} — all traffic stays in-cluster.`} />
-        </ChatbotFooter>
-      </Chatbot>
+          <button type="button" onClick={() => send(input)} disabled={isLoading || !input.trim()} style={{
+            width: 44, height: 44, borderRadius: 12, border: "none",
+            background: input.trim() ? "linear-gradient(135deg, #5b8def, #a855f7)" : "var(--arcana-card-bg)",
+            color: input.trim() ? "#fff" : "var(--arcana-text-muted)",
+            cursor: input.trim() && !isLoading ? "pointer" : "default",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all 0.15s", flexShrink: 0,
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          </button>
+        </div>
+        <div style={{ maxWidth: 720, margin: "6px auto 0", fontSize: 11, color: "var(--arcana-text-muted)", textAlign: "center" }}>
+          All traffic stays in-cluster
+        </div>
+      </div>
     </div>
   );
 };

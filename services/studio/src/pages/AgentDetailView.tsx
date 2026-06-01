@@ -121,7 +121,7 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
   const fetchDetail = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/v1/agents/${agentName}/detail`);
+      const res = await fetch(`/api/v1/agents/${agentName}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setDetail(data);
@@ -243,13 +243,7 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
                 }}
               >
                 <Label color={statusColor(detail.status)} isCompact>
-                  {detail.status}
-                </Label>{" "}
-                <Label
-                  color={detail.agent_type === "create_deep_agent" ? "purple" : "blue"}
-                  isCompact
-                >
-                  {detail.agent_type === "create_deep_agent" ? "deep agent" : "standard agent"}
+                  {detail.status === "active" ? "Running" : detail.status === "idle" ? "Sleeping" : detail.status === "offline" ? "Crashed" : detail.status}
                 </Label>
                 <span
                   style={{
@@ -478,7 +472,7 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
           <Grid hasGutter style={{ marginTop: 24 }}>
             <GridItem span={12}>
               <Card>
-                <CardTitle>Deep Agent Runtime</CardTitle>
+                <CardTitle>Runtime</CardTitle>
                 <CardBody>
                   <DescriptionList isHorizontal>
                     <DescriptionListGroup>
@@ -535,7 +529,7 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
           <Grid hasGutter style={{ marginTop: 24 }}>
             <GridItem span={12}>
               <Card>
-                <CardTitle>Deep Agent Configuration</CardTitle>
+                <CardTitle>Agent Configuration</CardTitle>
                 <CardBody>
                   <DescriptionList isHorizontal>
                     <DescriptionListGroup>

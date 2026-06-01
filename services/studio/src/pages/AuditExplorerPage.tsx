@@ -76,7 +76,7 @@ function generateMockEntries(count: number): AuditEntry[] {
   const agents = ["research-pipeline-agent", "code-assistant", "data-pipeline-agent", "support-bot", "content-writer"];
   const users = ["alice@acme.com", "bob@acme.com", "charlie@acme.com", "system"];
   const actions = ["tool_call", "model_invoke", "agent_deploy", "config_change", "data_access", "guardrail_trigger"];
-  const resources = ["/api/v1/agents", "/api/v1/skills/search", "/api/v1/mcp/execute", "/api/v1/eval/run", "/api/v1/connectors"];
+  const resources = ["/api/v1/agents", "/api/v1/skills/search", "/api/v1/tools/execute", "/api/v1/eval/run", "/api/v1/connectors"];
   const verdicts: Array<"allowed" | "blocked"> = ["allowed", "allowed", "allowed", "allowed", "blocked"];
 
   const entries: AuditEntry[] = [];
