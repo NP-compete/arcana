@@ -20,6 +20,12 @@ import asyncpg
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
@@ -32,6 +38,16 @@ def _cors_origins() -> list[str]:
     return [o.strip() for o in origins.split(",")]
 
 
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+)
+log = structlog.get_logger(service="ward")
+
 app = FastAPI(
     title="Arcana Ward",
     version="0.1.0",
@@ -43,23 +59,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-)
-log = structlog.get_logger(service="ward")
-
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 resource = Resource.create({SERVICE_NAME: "arcana-ward"})
 provider = TracerProvider(resource=resource)
@@ -220,13 +219,19 @@ _RISK_KEYWORDS = ["weapon", "explosive", "harmful", "illegal"]
 
 def _seed_rules() -> None:
     defaults = [
-        CreateRuleRequest(type="injection", pattern="ignore previous instructions", action=RuleAction.BLOCK, severity=Severity.HIGH),
+        CreateRuleRequest(
+            type="injection", pattern="ignore previous instructions",
+            action=RuleAction.BLOCK, severity=Severity.HIGH,
+        ),
         CreateRuleRequest(type="pii", pattern=r"\d{3}-\d{2}-\d{4}", action=RuleAction.REDACT, severity=Severity.MEDIUM),
         CreateRuleRequest(type="policy", pattern="confidential", action=RuleAction.WARN, severity=Severity.LOW),
     ]
     for req in defaults:
         rule_id = str(uuid.uuid4())
-        _rules[rule_id] = GuardrailRule(id=rule_id, type=req.type, pattern=req.pattern, action=req.action, severity=req.severity)
+        _rules[rule_id] = GuardrailRule(
+            id=rule_id, type=req.type, pattern=req.pattern,
+            action=req.action, severity=req.severity,
+        )
 
 
 _seed_rules()
@@ -261,7 +266,11 @@ def _layer_policy_check(text: str, agent_id: str) -> LayerResult:
                 detail=f"policy rule matched: {rule.pattern}",
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
-    return LayerResult(layer="policy_check", verdict=Verdict.ALLOW, passed=True, detail="no policy violations", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="policy_check", verdict=Verdict.ALLOW, passed=True,
+        detail="no policy violations", latency_ms=elapsed,
+    )
 
 
 def _layer_rate_limiting(agent_id: str) -> LayerResult:
@@ -279,7 +288,11 @@ def _layer_rate_limiting(agent_id: str) -> LayerResult:
             latency_ms=(time.perf_counter() - start) * 1000,
         )
     _rate_limits[key].append(now)
-    return LayerResult(layer="rate_limiting", verdict=Verdict.ALLOW, passed=True, detail="within rate limit", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="rate_limiting", verdict=Verdict.ALLOW, passed=True,
+        detail="within rate limit", latency_ms=elapsed,
+    )
 
 
 def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
@@ -288,7 +301,12 @@ def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
         if rule.agent_id not in (agent_id, "*"):
             continue
         if rule.type in ("injection", "pii") and rule.pattern.lower() in text.lower():
-            verdict = Verdict.BLOCK if rule.action == RuleAction.BLOCK else Verdict.REDACT if rule.action == RuleAction.REDACT else Verdict.WARN
+            if rule.action == RuleAction.BLOCK:
+                verdict = Verdict.BLOCK
+            elif rule.action == RuleAction.REDACT:
+                verdict = Verdict.REDACT
+            else:
+                verdict = Verdict.WARN
             return LayerResult(
                 layer="pattern_prefilter",
                 verdict=verdict,
@@ -313,7 +331,11 @@ def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
             detail="PII detected",
             latency_ms=(time.perf_counter() - start) * 1000,
         )
-    return LayerResult(layer="pattern_prefilter", verdict=Verdict.ALLOW, passed=True, detail="no patterns matched", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="pattern_prefilter", verdict=Verdict.ALLOW, passed=True,
+        detail="no patterns matched", latency_ms=elapsed,
+    )
 
 
 def _layer_semantic_check(text: str) -> LayerResult:
@@ -328,13 +350,17 @@ def _layer_semantic_check(text: str) -> LayerResult:
                 detail=f"semantic risk keyword: {kw}",
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
-    return LayerResult(layer="semantic_check", verdict=Verdict.ALLOW, passed=True, detail="semantic check passed", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="semantic_check", verdict=Verdict.ALLOW, passed=True,
+        detail="semantic check passed", latency_ms=elapsed,
+    )
 
 
 def _layer_risk_chain(text: str, direction: Direction, context: dict[str, Any]) -> LayerResult:
     start = time.perf_counter()
     risk_score = context.get("risk_score", 0.0)
-    if isinstance(risk_score, (int, float)) and risk_score > 0.8:
+    if isinstance(risk_score, int | float) and risk_score > 0.8:
         return LayerResult(
             layer="risk_chain",
             verdict=Verdict.BLOCK,
@@ -350,7 +376,11 @@ def _layer_risk_chain(text: str, direction: Direction, context: dict[str, Any]) 
             detail="output length exceeds recommended limit",
             latency_ms=(time.perf_counter() - start) * 1000,
         )
-    return LayerResult(layer="risk_chain", verdict=Verdict.ALLOW, passed=True, detail="risk chain passed", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="risk_chain", verdict=Verdict.ALLOW, passed=True,
+        detail="risk chain passed", latency_ms=elapsed,
+    )
 
 
 def _run_pipeline(text: str, agent_id: str, direction: Direction, context: dict[str, Any]) -> GuardrailCheck:

@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,12 @@ import asyncpg
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
@@ -32,7 +38,7 @@ def _cors_origins() -> list[str]:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ShortTermEntry(BaseModel):
@@ -123,7 +129,7 @@ class MemoryStore:
             value=value,
             ttl=ttl,
             created_at=now,
-            expires_at=datetime.fromtimestamp(now.timestamp() + ttl, tz=timezone.utc),
+            expires_at=datetime.fromtimestamp(now.timestamp() + ttl, tz=UTC),
         )
         with self._lock:
             self._purge_expired_short_term(agent_id)
@@ -252,12 +258,6 @@ structlog.configure(
 )
 log = structlog.get_logger(service="memory")
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 resource = Resource.create({SERVICE_NAME: "arcana-memory"})
 provider = TracerProvider(resource=resource)

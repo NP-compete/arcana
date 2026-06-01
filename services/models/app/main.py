@@ -21,6 +21,12 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
@@ -33,14 +39,6 @@ def _cors_origins() -> list[str]:
     return [o.strip() for o in origins.split(",")]
 
 
-app = FastAPI(title="Arcana Models", version="0.1.0", description="Model registry and serving")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins(),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
@@ -51,12 +49,14 @@ structlog.configure(
 )
 log = structlog.get_logger(service="models")
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+app = FastAPI(title="Arcana Models", version="0.1.0", description="Model registry and serving")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 resource = Resource.create({SERVICE_NAME: "arcana-models"})
 provider = TracerProvider(resource=resource)

@@ -1,74 +1,123 @@
-# Arcana Architecture Overview
+# Architecture
 
-Arcana is a Kubernetes-native AI platform for building, deploying, governing, and improving AI agents and ML models. The platform is organized into five architectural planes, eight Phase 1 services, five agentic protocols, eight CRDs, and a set of backing infrastructure services.
+Arcana is organized into five planes. Each plane owns one responsibility. Together, they cover the full lifecycle of an AI agent — from the YAML you write to the production infrastructure that keeps it running.
 
-## Five-Plane Architecture
-
-Arcana separates concerns across five planes. Each plane owns a distinct responsibility; together they form the full agent lifecycle from user interaction to durable operations.
-
-| Plane | Responsibility | Components |
-|-------|----------------|------------|
-| **Interact** | User-facing interfaces and streaming agent output | Studio UI, AG-UI server |
-| **Agent** | Orchestration, reconciliation, and inter-agent routing | Engine, Operator, Mesh |
-| **Data / Tool** | Skills, tool access, and data pipelines | Skills engine, MCP integrations |
-| **Govern** | Guardrails, policy enforcement, FinOps | Ward, OPA constraints |
-| **Ops** | Durable workflows, messaging, persistence | Temporal, NATS, PostgreSQL, Redis, MinIO |
+You interact with the top layer. Arcana manages everything underneath.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         INTERACT PLANE                              │
-│   arcana-studio (:3000)  ·  arcana-agui (:8084)                     │
-├─────────────────────────────────────────────────────────────────────┤
-│                          AGENT PLANE                                │
-│   arcana-engine (:8081)  ·  arcana-operator (:8082)                 │
-│   arcana-mesh (:8083)                                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                       DATA / TOOL PLANE                             │
-│   arcana-skills (:8085)  ·  MCP tool access                         │
-├─────────────────────────────────────────────────────────────────────┤
-│                         GOVERN PLANE                                │
-│   arcana-ward (:8086)  ·  OPA + Gatekeeper constraints              │
-├─────────────────────────────────────────────────────────────────────┤
-│                           OPS PLANE                                 │
-│   arcana-api (:8080)  ·  PostgreSQL  ·  Redis  ·  Temporal          │
-│   MinIO  ·  NATS                                                    │
-└─────────────────────────────────────────────────────────────────────┘
+   Your agent YAML
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         INTERACT PLANE                          │
+│   Studio UI (:3000)  ·  AG-UI streaming (:8084)                 │
+│   What users and developers see                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                          AGENT PLANE                            │
+│   Engine (:8081)  ·  Operator (:8082)  ·  Mesh (:8083)          │
+│   Orchestration, reconciliation, inter-agent routing            │
+├─────────────────────────────────────────────────────────────────┤
+│                       DATA / TOOL PLANE                         │
+│   Skills (:8085)  ·  RAG pipeline  ·  MCP  ·  Sandbox           │
+│   What agents can use                                           │
+├─────────────────────────────────────────────────────────────────┤
+│                         GOVERN PLANE                            │
+│   Ward (:8086)  ·  OPA  ·  KubeArmor                            │
+│   What agents are allowed to do                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                           OPS PLANE                             │
+│   PostgreSQL  ·  Redis  ·  Temporal  ·  NATS  ·  MinIO           │
+│   The boring infrastructure that makes it all work              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Phase 1 Services
+---
 
-Eight services ship in Phase 1. Five are Go binaries under `cmd/`, two are Python FastAPI services, and one is a TypeScript React app.
+## What Each Plane Does For You
 
-| Service | Language | Port | Plane | Role |
-|---------|----------|------|-------|------|
-| **arcana-api** | Go | 8080 | Ops / Interact | REST/GraphQL API gateway; entry point for external clients |
-| **arcana-engine** | Go | 8081 | Agent | Agent orchestration engine (LangGraph); runs agent workflows |
-| **arcana-operator** | Go | 8082 | Agent | Kubernetes operator; reconciles Arcana CRDs into cluster state |
-| **arcana-mesh** | Go | 8083 | Agent | A2A + ACP mesh gateway; routes agent-to-agent communication |
-| **arcana-agui** | Go | 8084 | Interact | AG-UI protocol server; streams agent events to clients via SSE |
-| **arcana-skills** | Python | 8085 | Data / Tool | Skill engine; catalog, versioning, and execution of agent skills |
-| **arcana-ward** | Python | 8086 | Govern | Guardrails pipeline; input/output filtering and policy checks |
-| **arcana-studio** | TypeScript | 3000 | Interact | Web UI (React + PatternFly 6); operator console for agents and resources |
+### Interact Plane — What Users See
+
+| Service | Language | Port | What it does |
+|---------|----------|------|-------------|
+| **arcana-studio** | TypeScript | 3000 | Web UI built with React + PatternFly 6. Manage agents, view logs, monitor costs. |
+| **arcana-agui** | Go | 8084 | AG-UI protocol server. Streams agent events to the browser via SSE in real time. |
+
+When a user talks to an agent, Studio connects to the AG-UI server. AG-UI streams events (thinking, tool calls, responses) back to the UI as they happen. No polling, no websocket complexity — just SSE.
+
+### Agent Plane — The Brains
+
+| Service | Language | Port | What it does |
+|---------|----------|------|-------------|
+| **arcana-engine** | Go | 8081 | Runs agent workflows on LangGraph. Handles tool calls, memory retrieval, and response generation. |
+| **arcana-operator** | Go | 8082 | Kubernetes operator. Watches Arcana CRDs and reconciles them into running infrastructure. |
+| **arcana-mesh** | Go | 8083 | A2A + ACP mesh gateway. Routes messages between agents. Exposes agent cards for discovery. |
+
+The engine is the runtime. The operator is the control plane. The mesh is the network.
+
+When you `kubectl apply` an `ArcanaAgent`, the operator picks it up, configures the engine, registers the agent on the mesh, and wires up its skills, memory, and guardrails. You don't touch any of these services directly.
+
+### Data / Tool Plane — What Agents Can Use
+
+| Service | Language | Port | What it does |
+|---------|----------|------|-------------|
+| **arcana-skills** | Python | 8085 | Skill catalog with versioning. Agents invoke skills; skills invoke tools. |
+| **codex-ingestor** | Go | — | Ingests documents into the RAG pipeline. |
+| **codex-router** | Go | — | Routes queries to the right knowledge base. |
+| **codex-searcher** | Go | — | Semantic search over vector embeddings. |
+| **codex-scorer** | Go | — | Re-ranks search results for relevance. |
+| **arcana-tools** | Go | — | MCP server integrations. Bridges external tools into the platform. |
+| **arcana-sandbox** | Go | — | Executes untrusted code in gVisor/Kata isolated pods. |
+
+Skills are the building blocks. A skill might call a GitHub API, run a static analysis tool, or search a knowledge base. Skills go through the guardrails pipeline before results reach the agent.
+
+The RAG pipeline (codex-*) handles the full retrieval lifecycle: ingest documents, chunk and embed them, search semantically, and score results. All from an `ArcanaCodex` CRD.
+
+### Govern Plane — What Agents Are Allowed To Do
+
+| Service | Language | Port | What it does |
+|---------|----------|------|-------------|
+| **arcana-ward** | Python | 8086 | Guardrails pipeline. Filters agent inputs and outputs against safety rules. |
+| **OPA** | — | — | Open Policy Agent. Enforces fine-grained policies on CRD admission. |
+| **KubeArmor** | — | — | Runtime security enforcement. Locks down container behavior. |
+
+Every agent interaction passes through Ward. Ward checks inputs against the `ArcanaGuardrail` rules before the agent sees them, and checks outputs before they reach the user. OPA handles cluster-level policy enforcement. KubeArmor prevents container escapes.
+
+Budgets are enforced here too. The `ArcanaBudget` CRD sets token and compute spend limits. When an agent approaches its limit, it gets an alert. When it hits the limit, it stops.
+
+### Ops Plane — The Infrastructure
+
+| Service | Port(s) | What it does for you |
+|---------|---------|---------------------|
+| **arcana-api** | 8080 | REST/GraphQL gateway. Entry point for external clients. |
+| **PostgreSQL + pgvector** | 5432 | Agent metadata, skill definitions, vector embeddings. |
+| **Redis** | 6379 | Low-latency cache, session state, rate limiting. |
+| **Temporal** | 7233 | Durable workflows — long-running agent tasks, retries, sagas. |
+| **NATS JetStream** | 4222 | Event bus — async agent events, mesh pub/sub, cross-service messaging. |
+| **MinIO** | 9000 | S3-compatible object storage — skill artifacts, model weights, eval datasets. |
+
+You don't configure these individually. `make dev` starts all of them. In production, Helmfile deploys them with environment-appropriate settings.
+
+---
 
 ## Agentic Protocols
 
-Arcana integrates five agentic protocols. Shared Go types live in `pkg/`.
+Arcana integrates five protocols so agents can talk to tools, each other, and users without custom integration code.
 
-| Protocol | Package | Purpose |
-|----------|---------|---------|
-| **MCP** (Model Context Protocol) | `pkg/mcp` | Tool access — agents invoke external tools and data sources through MCP servers |
-| **A2A** (Agent-to-Agent) | `pkg/a2a` | Primary agent-to-agent communication; mesh exposes agent cards and routes messages |
-| **ACP** (Agent Communication Protocol) | `pkg/acp` | Agent-to-agent adapter; bridges ACP-compatible agents into the Arcana mesh |
-| **AG-UI** (Agent-User Interface) | `pkg/agui` | Agent-to-user streaming; SSE event stream for real-time UI updates |
-| **ACS** (Agent Control) | — | Agent control plane; lifecycle management, run cancellation, and session governance |
+| Protocol | Package | What it does |
+|----------|---------|-------------|
+| **MCP** (Model Context Protocol) | `pkg/mcp` | Agents invoke external tools and data sources through MCP servers. |
+| **A2A** (Agent-to-Agent) | `pkg/a2a` | Agents discover each other via agent cards and exchange messages through the mesh. |
+| **ACP** (Agent Communication Protocol) | `pkg/acp` | Bridges ACP-compatible agents into the Arcana mesh. |
+| **AG-UI** (Agent-User Interface) | `pkg/agui` | Real-time streaming from agent to browser via SSE events. |
+| **ACS** (Agent Control) | — | Lifecycle management — start, stop, cancel runs, manage sessions. |
 
 ```
   User / Studio
        │
        ▼ AG-UI (SSE)
-  arcana-agui ──────────────────────────────┐
-       │                                    │
-       ▼                                    ▼
+  arcana-agui
+       │
+       ▼
   arcana-engine ◄──── A2A / ACP ────► arcana-mesh
        │                                    │
        ▼ MCP                                │
@@ -81,73 +130,51 @@ Arcana integrates five agentic protocols. Shared Go types live in `pkg/`.
   arcana-operator (CRD reconciliation)
 ```
 
+---
+
 ## Custom Resource Definitions
 
-All eight CRDs are declared in `deploy/crds/` with Go types in `pkg/crds/`.
+Arcana ships 16 CRDs that cover the full agent lifecycle. The operator watches these and drives cluster state.
 
-| CRD | Short Name | Scope | Purpose |
-|-----|-----------|-------|---------|
-| **ArcanaAgent** | `aag` | Namespaced | Agent lifecycle and configuration — model, skills, memory, guardrails |
+All CRD manifests live in `deploy/crds/`. Go types live in `pkg/crds/`.
+
+| CRD | Short Name | Scope | What it does |
+|-----|-----------|-------|-------------|
+| **ArcanaAgent** | `aag` | Namespaced | Agent configuration — model, skills, memory, guardrails, sandbox |
 | **ArcanaTenant** | `aten` | Cluster | Multi-tenant isolation — namespace mapping and resource quotas |
-| **ArcanaSkillRegistry** | `askr` | Namespaced | Skill catalog and versioning — registers skills available to agents |
-| **ArcanaEvalSuite** | `aes` | Namespaced | Skill evaluation pipelines — automated quality gates (advisory/warn/block) |
-| **ArcanaRole** | `arole` | Namespaced | RBAC + ABAC policies — permissions for agents, skills, and resources |
-| **ArcanaBudget** | `abud` | Namespaced | FinOps budgets — token and compute spend limits with alert thresholds |
-| **ArcanaPromotion** | `aprom` | Namespaced | Environment promotion — dev → staging → prod with approval gates |
-| **ArcanaBackupPolicy** | `abkp` | Namespaced | Backup scheduling — cron-based backups with retention and destinations |
+| **ArcanaModel** | `amod` | Namespaced | Model registry — provider, version, routing |
+| **ArcanaSkillRegistry** | `askr` | Namespaced | Skill catalog with versioning |
+| **ArcanaConnector** | `acon` | Namespaced | External data source connections |
+| **ArcanaCodex** | `acdx` | Namespaced | RAG knowledge base configuration |
+| **ArcanaDataset** | `adset` | Namespaced | Training and evaluation datasets |
+| **ArcanaRole** | `arole` | Namespaced | RBAC + ABAC policies for agents and resources |
+| **ArcanaGuardrail** | `agrd` | Namespaced | Input/output filtering and safety constraints |
+| **ArcanaBudget** | `abud` | Namespaced | Token and compute spend limits with alert thresholds |
+| **ArcanaEvalSuite** | `aes` | Namespaced | Automated eval pipelines — advisory / warn / block quality gates |
+| **ArcanaExperiment** | `aexp` | Namespaced | A/B testing and canary experiments |
+| **ArcanaPromotion** | `aprom` | Namespaced | Environment promotion: dev → staging → prod with approvals |
+| **ArcanaBlueprint** | `abp` | Namespaced | Reusable agent templates |
+| **ArcanaBackupPolicy** | `abkp` | Namespaced | Cron-based backups with retention |
+| **ArcanaPlatform** | `aplat` | Cluster | Platform-wide configuration and defaults |
 
-The operator watches these CRDs and drives the desired state of agents, policies, and infrastructure within the cluster.
-
-## Backing Services
-
-Local development runs backing services via `deploy/compose/docker-compose.yaml`. Each service supports a specific platform capability.
-
-| Service | Port(s) | Why It Is Needed |
-|---------|---------|------------------|
-| **PostgreSQL + pgvector** | 5432 | Primary datastore — agent metadata, skill definitions, vector embeddings for semantic memory |
-| **Redis** | 6379 | Low-latency cache and short-TTL agent memory; session state and rate limiting |
-| **Temporal** | 7233 (UI: 8233) | Durable workflow orchestration — long-running agent tasks, retries, and saga patterns |
-| **MinIO** | 9000 (UI: 9001) | S3-compatible object storage — skill artifacts, model weights, eval datasets, backups |
-| **NATS** | 4222 (monitor: 8222) | Event bus with JetStream — async agent events, mesh pub/sub, and cross-service messaging |
-
-```
-                         ┌──────────────┐
-                         │ arcana-api   │
-                         └──────┬───────┘
-                                │
-         ┌──────────────────────┼──────────────────────┐
-         │                      │                      │
-         ▼                      ▼                      ▼
-  ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-  │ PostgreSQL  │       │    Redis    │       │   Temporal  │
-  │  + pgvector │       │   (cache)   │       │ (workflows) │
-  └─────────────┘       └─────────────┘       └─────────────┘
-         │                      │                      │
-         └──────────────────────┼──────────────────────┘
-                                │
-         ┌──────────────────────┼──────────────────────┐
-         │                      │                      │
-         ▼                      ▼                      ▼
-  ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-  │    MinIO    │       │    NATS     │       │    Kind     │
-  │  (objects)  │       │  (events)   │       │  (K8s CRDs) │
-  └─────────────┘       └─────────────┘       └─────────────┘
-```
+---
 
 ## Repository Layout
 
 ```
 arcana/
-├── cmd/                    # Go service entrypoints (engine, operator, mesh, api, agui)
+├── cmd/                    # Go service entrypoints (engine, operator, mesh, api, agui, codex-*)
 ├── pkg/                    # Shared Go packages (mcp, a2a, acp, agui, crds, ward, temporal)
-├── services/               # Non-Go services (skills, ward, studio)
+├── services/               # Non-Go services (skills, ward, studio, memory, forge, ...)
 ├── deploy/
 │   ├── kind/               # Kind cluster config
 │   ├── compose/            # Backing service Compose file
 │   ├── crds/               # CRD manifests (source of truth)
-│   ├── helm/               # One chart per service
-│   └── opa/                # Gatekeeper constraint templates
-├── hack/                   # Developer scripts (new-branch.sh, etc.)
-├── test/                   # E2E and integration tests
-└── Makefile                # build, dev, test, lint targets
+│   ├── helm/               # One Helm chart per service (28 charts)
+│   └── opa/                # OPA constraint templates
+├── examples/               # Ready-to-deploy agent configurations
+├── e2e/                    # Playwright end-to-end tests
+├── docs/                   # You are here
+├── hack/                   # Developer scripts
+└── Makefile                # build, dev, test, lint, deploy targets
 ```
