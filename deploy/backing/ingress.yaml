@@ -29,13 +29,6 @@ spec:
                 name: arcana-api
                 port:
                   number: 8080
-          - path: /agents/
-            pathType: Prefix
-            backend:
-              service:
-                name: arcana-api
-                port:
-                  number: 8080
           - path: /events
             pathType: Prefix
             backend:

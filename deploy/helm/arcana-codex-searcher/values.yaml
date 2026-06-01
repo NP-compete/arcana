@@ -19,7 +19,7 @@ service:
 
 env:
   PORT: "8091"
-  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger.arcana.svc.cluster.local:4318"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger.arcana.svc.cluster.local:4318"
 
 probes:
   liveness: "/healthz"

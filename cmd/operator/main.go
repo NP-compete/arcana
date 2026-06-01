@@ -17,7 +17,7 @@ import (
 )
 
 var agentGVR = schema.GroupVersionResource{
-	Group:    "arcana.ai",
+	Group:    "arcana.io",
 	Version:  "v1alpha1",
 	Resource: "arcanaagents",
 }
@@ -81,7 +81,7 @@ func reconcile(client dynamic.Interface) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	agents, err := client.Resource(agentGVR).Namespace("arcana").List(ctx, metav1.ListOptions{})
+	agents, err := client.Resource(agentGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		log.Printf("operator: list agents failed: %v", err)
 		status.Errors = append(status.Errors, fmt.Sprintf("%s: %v", time.Now().Format(time.RFC3339), err))
