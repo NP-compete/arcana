@@ -542,7 +542,7 @@ const EvalBuilderTab = () => {
         if (names.length > 0 && !selectedSkill) setSelectedSkill(names[0]);
       })
       .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const addCase = () => {
     setTestCases((prev) => [

@@ -18,7 +18,7 @@ import (
 
 func testDB(t *testing.T) *TaskStore {
 	t.Helper()
-	conn, err := db.Connect()
+	conn, err := db.ConnectWithTimeout(3)
 	if err != nil {
 		t.Skipf("skipping: database not available: %v", err)
 	}
