@@ -35,6 +35,28 @@ func Connect() (*sql.DB, error) {
 	return nil, fmt.Errorf("db: failed to connect after 30 retries: %w", err)
 }
 
+func ConnectWithTimeout(maxRetries int) (*sql.DB, error) {
+	dsn := buildDSN()
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db open: %w", err)
+	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	for i := 0; i < maxRetries; i++ {
+		if err = db.Ping(); err == nil {
+			log.Info("connected", "mode", dbMode(), "host", resolveHost())
+			return db, nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return nil, fmt.Errorf("db: failed to connect after %d retries: %w", maxRetries, err)
+}
+
 func MustConnect() *sql.DB {
 	db, err := Connect()
 	if err != nil {
