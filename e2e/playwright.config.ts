@@ -1,7 +1,12 @@
 import { defineConfig } from "@playwright/test";
+import { defineBddConfig } from "playwright-bdd";
+
+const bddTestDir = defineBddConfig({
+  features: "features/**/*.feature",
+  steps: ["steps/**/*.ts", "fixtures/**/*.ts"],
+});
 
 export default defineConfig({
-  testDir: "./tests",
   timeout: 30000,
   retries: 1,
   use: {
@@ -11,7 +16,13 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
+      name: "bdd",
+      testDir: bddTestDir,
+      use: { browserName: "chromium" },
+    },
+    {
+      name: "existing",
+      testDir: "./tests",
       use: { browserName: "chromium" },
     },
   ],
