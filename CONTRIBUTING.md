@@ -1,8 +1,17 @@
 # Contributing to Arcana
 
-Thank you for contributing to Arcana. This guide covers setup, workflow, and conventions for the monorepo.
+We're building the deployment platform for AI agents. Contributions make it better for everyone.
 
-## Development Setup
+## Your First Contribution
+
+Not sure where to start? Here are some good entry points:
+
+1. **Pick a `good-first-issue`** — [browse open issues](https://github.com/NP-compete/arcana/labels/good-first-issue)
+2. **Improve docs** — fix a typo, clarify a confusing section, add an example
+3. **Add a test** — find untested code and cover it
+4. **Try the platform** — run `make dev`, deploy an agent, and file issues for anything that's confusing
+
+## Setup
 
 ### Prerequisites
 
@@ -15,41 +24,49 @@ Thank you for contributing to Arcana. This guide covers setup, workflow, and con
 | Docker or Podman | 4.0+ | Backing services and container builds |
 | kubectl | latest | Cluster interaction |
 
-Clone the repository and start the full development environment:
+### Get Running
 
 ```bash
 git clone https://github.com/NP-compete/arcana.git
 cd arcana
-make dev
+make dev          # creates cluster, starts services, builds everything
+make dev-status   # verify health
 ```
 
-`make dev` creates a Kind cluster, starts backing services (PostgreSQL, Redis, Temporal, MinIO, NATS) via Compose, installs CRDs, and builds all services. Use `make dev-status` to verify health and `make dev-down` to tear everything down.
+Arcana auto-detects Podman or Docker. Override with `CONTAINER_CMD=docker make dev`.
 
-Arcana auto-detects Podman or Docker. Override with `CONTAINER_CMD=docker make dev` or `CONTAINER_CMD=podman make dev`.
+See the [Development Guide](docs/development.md) for a deeper walkthrough.
 
-## Branch Naming
+## Workflow
 
-Use the pattern `{type}/{slug}`:
+### 1. Create a Branch
+
+```bash
+./hack/new-branch.sh feat add-skill-versioning
+# Creates: feat/add-skill-versioning
+```
+
+Branch naming: `{type}/{slug}`
 
 | Type | Use for |
 |------|---------|
 | `feat` | New features |
 | `fix` | Bug fixes |
-| `refactor` | Code restructuring without behavior change |
-| `docs` | Documentation only |
+| `refactor` | Code restructuring |
+| `docs` | Documentation |
 | `chore` | Maintenance, deps, CI |
-| `scaffold` | New service or infrastructure scaffolding |
+| `scaffold` | New services or infrastructure |
 
-The slug should be kebab-case and describe the change (e.g. `add-skill-versioning`).
+### 2. Make Your Changes
 
-Create branches with the helper script:
+Write code, write tests, run the full check:
 
 ```bash
-./hack/new-branch.sh feat add-skill-versioning
-# Creates branch: feat/add-skill-versioning
+make test   # all tests (Go + Python + TypeScript)
+make lint   # all linters
 ```
 
-## Commit Messages
+### 3. Commit
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
@@ -57,31 +74,26 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 type(scope): description
 ```
 
-**Types:** `feat`, `fix`, `refactor`, `docs`, `chore`, `scaffold`, `test`
-
 **Scopes:** `engine`, `operator`, `mesh`, `api`, `agui`, `skills`, `ward`, `studio`, `helm`, `crds`, `opa`, `ci`
-
-Examples:
 
 ```
 feat(skills): add versioning support
 fix(operator): reconcile ArcanaAgent status correctly
-docs(architecture): document five-plane layout
+docs(architecture): clarify five-plane layout
 chore(ci): bump golangci-lint version
 ```
 
-## Pull Requests
-
-- **Never push directly to `main`.** All changes go through pull requests.
-- Keep PRs **small and focused** — one concern per PR.
-- Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) when creating PRs.
-- Run `make test` and `make lint` before opening a PR.
-- Ensure the checklist in the PR template is complete.
+### 4. Open a PR
 
 ```bash
 git push -u origin HEAD
 gh pr create
 ```
+
+- Keep PRs small and focused — one concern per PR
+- Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
+- Ensure `make test` and `make lint` pass
+- Never push directly to `main`
 
 ## Code Style
 
@@ -91,34 +103,24 @@ gh pr create
 | Python | `ruff` (lint + format) |
 | TypeScript | `eslint` + `prettier` |
 
-Run formatting and linting across the repo:
-
 ```bash
-make fmt    # Format all code
-make lint   # Lint all code
+make fmt    # format all code
+make lint   # lint all code
 ```
 
 ## Testing
 
-Run the full test suite before pushing:
-
-```bash
-make test
-```
-
-New features must include tests. Per-language targets:
+New features must include tests.
 
 | Target | Scope |
 |--------|-------|
 | `make test-go` | Go services in `cmd/` |
-| `make test-python` | Python services in `services/skills`, `services/ward` |
-| `make test-studio` | Studio UI tests |
+| `make test-python` | Python services |
+| `make test-studio` | Studio UI |
 
 ## CRDs
 
-All CRD manifests live under `deploy/crds/`. Go types live in `pkg/crds/`. **Keep them in sync** — when you change a CRD schema, update the corresponding Go types.
-
-Install CRDs into the local Kind cluster:
+Manifests live in `deploy/crds/`. Go types in `pkg/crds/`. **Keep them in sync** — when you change a CRD schema, update the Go types.
 
 ```bash
 make crds-install
@@ -126,17 +128,12 @@ make crds-install
 
 ## Helm Charts
 
-One Helm chart per service under `deploy/helm/{service}/`:
+One chart per service under `deploy/helm/{service}/`. When adding a new service, scaffold a matching chart.
 
-| Chart | Service |
-|-------|---------|
-| `arcana-api` | API gateway |
-| `arcana-engine` | Agent orchestration engine |
-| `arcana-operator` | Kubernetes operator |
-| `arcana-mesh` | A2A/ACP mesh gateway |
-| `arcana-agui` | AG-UI protocol server |
-| `arcana-skills` | Skill engine |
-| `arcana-ward` | Guardrails pipeline |
-| `arcana-studio` | Web UI |
+## Code of Conduct
 
-When adding a new service, scaffold a matching chart under `deploy/helm/`.
+We follow the [Contributor Covenant](CODE_OF_CONDUCT.md). Be respectful, be constructive, be kind.
+
+## Questions?
+
+Open a [discussion](https://github.com/NP-compete/arcana/discussions) or reach out on [Discord](https://discord.gg/arcana).

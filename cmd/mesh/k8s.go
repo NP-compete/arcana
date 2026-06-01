@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,10 +32,17 @@ func NewK8sClient() (*K8sClient, error) {
 		return nil, fmt.Errorf("cannot read SA token: %w", err)
 	}
 
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{}
 	caCert, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 	if err == nil {
-		_ = caCert
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(caCert) {
+			tlsConfig.RootCAs = pool
+		}
+	} else if os.Getenv("K8S_INSECURE_SKIP_VERIFY") == "true" {
+		tlsConfig.InsecureSkipVerify = true
+	} else {
+		return nil, fmt.Errorf("cannot read CA cert and K8S_INSECURE_SKIP_VERIFY not set: %w", err)
 	}
 
 	return &K8sClient{
@@ -164,6 +172,18 @@ func (k *K8sClient) CreateNetworkPolicy(namespace, name string) error {
 						}},
 					},
 				},
+				{
+					"from": []map[string]interface{}{
+						{"namespaceSelector": map[string]interface{}{
+							"matchLabels": map[string]string{
+								"app.kubernetes.io/name": "ingress-nginx",
+							},
+						}},
+					},
+					"ports": []map[string]interface{}{
+						{"protocol": "TCP", "port": 5002},
+					},
+				},
 			},
 			"egress": []map[string]interface{}{
 				{
@@ -182,6 +202,11 @@ func (k *K8sClient) CreateNetworkPolicy(namespace, name string) error {
 					"ports": []map[string]interface{}{
 						{"protocol": "TCP", "port": 53},
 						{"protocol": "UDP", "port": 53},
+					},
+				},
+				{
+					"ports": []map[string]interface{}{
+						{"protocol": "TCP", "port": 443},
 					},
 				},
 			},
@@ -314,6 +339,59 @@ func (k *K8sClient) CreateService(namespace, name string, port int, targetPort i
 	return nil
 }
 
+func (k *K8sClient) CreateIngress(namespace, name, host, serviceName string, servicePort int) error {
+	ing := map[string]interface{}{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "Ingress",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+			"annotations": map[string]string{
+				"nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+				"nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+				"nginx.ingress.kubernetes.io/proxy-buffering":    "off",
+				"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
+			},
+		},
+		"spec": map[string]interface{}{
+			"ingressClassName": "nginx",
+			"rules": []map[string]interface{}{
+				{
+					"host": host,
+					"http": map[string]interface{}{
+						"paths": []map[string]interface{}{
+							{
+								"path":     "/",
+								"pathType": "Prefix",
+								"backend": map[string]interface{}{
+									"service": map[string]interface{}{
+										"name": serviceName,
+										"port": map[string]interface{}{
+											"number": servicePort,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, code, err := k.do("POST",
+		fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/ingresses", namespace), ing)
+	if err != nil {
+		return err
+	}
+	if code == 409 {
+		return nil
+	}
+	if code >= 300 {
+		return fmt.Errorf("create ingress: HTTP %d", code)
+	}
+	return nil
+}
+
 func (k *K8sClient) GetDeploymentStatus(namespace, name string) (map[string]interface{}, error) {
 	body, code, err := k.do("GET",
 		fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, name), nil)
@@ -324,7 +402,9 @@ func (k *K8sClient) GetDeploymentStatus(namespace, name string) (map[string]inte
 		return nil, nil
 	}
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
 	return result, nil
 }
 
@@ -337,7 +417,9 @@ func (k *K8sClient) GetNamespace(name string) (map[string]interface{}, error) {
 		return nil, nil
 	}
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
 	return result, nil
 }
 
@@ -350,7 +432,9 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 			continue
 		}
 		var list map[string]interface{}
-		json.Unmarshal(body, &list)
+		if err := json.Unmarshal(body, &list); err != nil {
+			continue
+		}
 		if items, ok := list["items"].([]interface{}); ok {
 			counts[resource] = len(items)
 		}
@@ -360,9 +444,10 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 		fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", namespace), nil)
 	if err == nil && code == 200 {
 		var list map[string]interface{}
-		json.Unmarshal(body, &list)
-		if items, ok := list["items"].([]interface{}); ok {
-			counts["networkpolicies"] = len(items)
+		if err := json.Unmarshal(body, &list); err == nil {
+			if items, ok := list["items"].([]interface{}); ok {
+				counts["networkpolicies"] = len(items)
+			}
 		}
 	}
 
@@ -370,9 +455,10 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 		fmt.Sprintf("/apis/arcana.io/v1alpha1/namespaces/%s/arcanaagents", namespace), nil)
 	if err == nil && code == 200 {
 		var list map[string]interface{}
-		json.Unmarshal(body, &list)
-		if items, ok := list["items"].([]interface{}); ok {
-			counts["arcanaagents"] = len(items)
+		if err := json.Unmarshal(body, &list); err == nil {
+			if items, ok := list["items"].([]interface{}); ok {
+				counts["arcanaagents"] = len(items)
+			}
 		}
 	}
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import logging
 import re
 import threading
@@ -10,25 +11,34 @@ import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import asyncpg
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
-app = FastAPI(
-    title="Arcana Ward",
-    version="0.1.0",
-    description="Guardrails, policy enforcement, and safety pipeline",
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
+
 
 structlog.configure(
     processors=[
@@ -40,12 +50,17 @@ structlog.configure(
 )
 log = structlog.get_logger(service="ward")
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+app = FastAPI(
+    title="Arcana Ward",
+    version="0.1.0",
+    description="Guardrails, policy enforcement, and safety pipeline",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 resource = Resource.create({SERVICE_NAME: "arcana-ward"})
 provider = TracerProvider(resource=resource)
@@ -64,12 +79,15 @@ pool: asyncpg.Pool | None = None
 @app.on_event("startup")
 async def startup_db():
     global pool
+    password = os.getenv("POSTGRES_PASSWORD", "" if os.getenv("ARCANA_ENV") == "production" else "arcana-dev")
+    if not password:
+        raise RuntimeError("POSTGRES_PASSWORD required in production")
     try:
         pool = await asyncpg.create_pool(
             host=os.getenv("POSTGRES_HOST", "postgres"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
             user=os.getenv("POSTGRES_USER", "arcana"),
-            password=os.getenv("POSTGRES_PASSWORD", "arcana-dev"),
+            password=password,
             database=os.getenv("POSTGRES_DB", "arcana"),
             min_size=2,
             max_size=10,
@@ -203,13 +221,19 @@ _RISK_KEYWORDS = ["weapon", "explosive", "harmful", "illegal"]
 
 def _seed_rules() -> None:
     defaults = [
-        CreateRuleRequest(type="injection", pattern="ignore previous instructions", action=RuleAction.BLOCK, severity=Severity.HIGH),
+        CreateRuleRequest(
+            type="injection", pattern="ignore previous instructions",
+            action=RuleAction.BLOCK, severity=Severity.HIGH,
+        ),
         CreateRuleRequest(type="pii", pattern=r"\d{3}-\d{2}-\d{4}", action=RuleAction.REDACT, severity=Severity.MEDIUM),
         CreateRuleRequest(type="policy", pattern="confidential", action=RuleAction.WARN, severity=Severity.LOW),
     ]
     for req in defaults:
         rule_id = str(uuid.uuid4())
-        _rules[rule_id] = GuardrailRule(id=rule_id, type=req.type, pattern=req.pattern, action=req.action, severity=req.severity)
+        _rules[rule_id] = GuardrailRule(
+            id=rule_id, type=req.type, pattern=req.pattern,
+            action=req.action, severity=req.severity,
+        )
 
 
 _seed_rules()
@@ -244,7 +268,11 @@ def _layer_policy_check(text: str, agent_id: str) -> LayerResult:
                 detail=f"policy rule matched: {rule.pattern}",
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
-    return LayerResult(layer="policy_check", verdict=Verdict.ALLOW, passed=True, detail="no policy violations", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="policy_check", verdict=Verdict.ALLOW, passed=True,
+        detail="no policy violations", latency_ms=elapsed,
+    )
 
 
 def _layer_rate_limiting(agent_id: str) -> LayerResult:
@@ -262,7 +290,11 @@ def _layer_rate_limiting(agent_id: str) -> LayerResult:
             latency_ms=(time.perf_counter() - start) * 1000,
         )
     _rate_limits[key].append(now)
-    return LayerResult(layer="rate_limiting", verdict=Verdict.ALLOW, passed=True, detail="within rate limit", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="rate_limiting", verdict=Verdict.ALLOW, passed=True,
+        detail="within rate limit", latency_ms=elapsed,
+    )
 
 
 def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
@@ -271,7 +303,12 @@ def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
         if rule.agent_id not in (agent_id, "*"):
             continue
         if rule.type in ("injection", "pii") and rule.pattern.lower() in text.lower():
-            verdict = Verdict.BLOCK if rule.action == RuleAction.BLOCK else Verdict.REDACT if rule.action == RuleAction.REDACT else Verdict.WARN
+            if rule.action == RuleAction.BLOCK:
+                verdict = Verdict.BLOCK
+            elif rule.action == RuleAction.REDACT:
+                verdict = Verdict.REDACT
+            else:
+                verdict = Verdict.WARN
             return LayerResult(
                 layer="pattern_prefilter",
                 verdict=verdict,
@@ -296,7 +333,11 @@ def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
             detail="PII detected",
             latency_ms=(time.perf_counter() - start) * 1000,
         )
-    return LayerResult(layer="pattern_prefilter", verdict=Verdict.ALLOW, passed=True, detail="no patterns matched", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="pattern_prefilter", verdict=Verdict.ALLOW, passed=True,
+        detail="no patterns matched", latency_ms=elapsed,
+    )
 
 
 def _layer_semantic_check(text: str) -> LayerResult:
@@ -311,13 +352,17 @@ def _layer_semantic_check(text: str) -> LayerResult:
                 detail=f"semantic risk keyword: {kw}",
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
-    return LayerResult(layer="semantic_check", verdict=Verdict.ALLOW, passed=True, detail="semantic check passed", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="semantic_check", verdict=Verdict.ALLOW, passed=True,
+        detail="semantic check passed", latency_ms=elapsed,
+    )
 
 
 def _layer_risk_chain(text: str, direction: Direction, context: dict[str, Any]) -> LayerResult:
     start = time.perf_counter()
     risk_score = context.get("risk_score", 0.0)
-    if isinstance(risk_score, (int, float)) and risk_score > 0.8:
+    if isinstance(risk_score, int | float) and risk_score > 0.8:
         return LayerResult(
             layer="risk_chain",
             verdict=Verdict.BLOCK,
@@ -333,7 +378,11 @@ def _layer_risk_chain(text: str, direction: Direction, context: dict[str, Any]) 
             detail="output length exceeds recommended limit",
             latency_ms=(time.perf_counter() - start) * 1000,
         )
-    return LayerResult(layer="risk_chain", verdict=Verdict.ALLOW, passed=True, detail="risk chain passed", latency_ms=(time.perf_counter() - start) * 1000)
+    elapsed = (time.perf_counter() - start) * 1000
+    return LayerResult(
+        layer="risk_chain", verdict=Verdict.ALLOW, passed=True,
+        detail="risk chain passed", latency_ms=elapsed,
+    )
 
 
 def _run_pipeline(text: str, agent_id: str, direction: Direction, context: dict[str, Any]) -> GuardrailCheck:
@@ -404,7 +453,7 @@ async def readyz() -> dict[str, str]:
 
 
 @app.post("/api/v1/check", response_model=GuardrailCheck)
-async def run_check(req: CheckRequest) -> GuardrailCheck:
+async def run_check(req: CheckRequest, auth: dict = _auth_dep) -> GuardrailCheck:
     with _store_lock:
         check = _run_pipeline(req.text, req.agent_id, req.direction, req.context)
         _update_stats(check)
@@ -412,14 +461,14 @@ async def run_check(req: CheckRequest) -> GuardrailCheck:
 
 
 @app.get("/api/v1/rules")
-async def list_rules() -> dict[str, Any]:
+async def list_rules(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         rules = list(_rules.values())
     return {"rules": rules, "total": len(rules)}
 
 
 @app.post("/api/v1/rules", response_model=GuardrailRule, status_code=201)
-async def create_rule(req: CreateRuleRequest) -> GuardrailRule:
+async def create_rule(req: CreateRuleRequest, auth: dict = _auth_dep) -> GuardrailRule:
     with _store_lock:
         rule_id = str(uuid.uuid4())
         rule = GuardrailRule(
@@ -431,14 +480,14 @@ async def create_rule(req: CreateRuleRequest) -> GuardrailRule:
 
 
 @app.get("/api/v1/rules/agent/{agent_id}")
-async def list_agent_rules(agent_id: str) -> dict[str, Any]:
+async def list_agent_rules(agent_id: str, auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         rules = [r for r in _rules.values() if r.agent_id in (agent_id, "*")]
     return {"rules": rules, "total": len(rules), "agent_id": agent_id}
 
 
 @app.delete("/api/v1/rules/{rule_id}")
-async def delete_rule(rule_id: str) -> dict[str, str]:
+async def delete_rule(rule_id: str, auth: dict = _auth_dep) -> dict[str, str]:
     with _store_lock:
         if rule_id not in _rules:
             raise HTTPException(status_code=404, detail="rule not found")
@@ -447,7 +496,7 @@ async def delete_rule(rule_id: str) -> dict[str, str]:
 
 
 @app.get("/api/v1/stats", response_model=GuardrailStats)
-async def get_stats() -> GuardrailStats:
+async def get_stats(auth: dict = _auth_dep) -> GuardrailStats:
     with _store_lock:
         return GuardrailStats(
             checks_total=_stats["checks_total"],
@@ -462,7 +511,7 @@ async def get_stats() -> GuardrailStats:
 
 
 @app.get("/api/v1/ward/agents/{name}/rules")
-async def get_agent_rules(name: str) -> dict[str, Any]:
+async def get_agent_rules(name: str, auth: dict = _auth_dep) -> dict[str, Any]:
     """Get guardrail rules for an agent."""
     if pool:
         rows = await pool.fetch(
@@ -487,7 +536,7 @@ async def get_agent_rules(name: str) -> dict[str, Any]:
 
 
 @app.put("/api/v1/ward/agents/{name}/rules")
-async def set_agent_rules(name: str, request: Request) -> dict[str, Any]:
+async def set_agent_rules(name: str, request: Request, auth: dict = _auth_dep) -> dict[str, Any]:
     """Set guardrail rules for an agent."""
     body = await request.json()
     rules = body.get("rules", [])
@@ -516,7 +565,7 @@ async def set_agent_rules(name: str, request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/v1/ward/evaluate")
-async def evaluate_input(request: Request) -> dict[str, Any]:
+async def evaluate_input(request: Request, auth: dict = _auth_dep) -> dict[str, Any]:
     """Test input against guardrail rules."""
     body = await request.json()
     text = body.get("text", "")
@@ -568,7 +617,7 @@ async def evaluate_input(request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/v1/ward/stats")
-async def ward_stats() -> dict[str, Any]:
+async def ward_stats(auth: dict = _auth_dep) -> dict[str, Any]:
     """Get overall ward statistics."""
     with _store_lock:
         total = _stats["checks_total"]
@@ -582,34 +631,28 @@ async def ward_stats() -> dict[str, Any]:
         row = await pool.fetchrow("SELECT COUNT(*) AS cnt FROM guardrail_rules")
         rule_count = row["cnt"] if row else 0
 
-    # Provide real stats when available, fall back to realistic seed data
-    # so the UI has meaningful content on first load.
     if total == 0:
         return {
-            "total_checks": 15847,
-            "blocked": 342,
-            "warned": 891,
-            "passed": 14614,
-            "block_rate": 0.022,
-            "top_violations": [
-                {"type": "pii", "count": 156},
-                {"type": "toxicity", "count": 89},
-                {"type": "prompt_injection", "count": 67},
-                {"type": "topic_restriction", "count": 30},
-            ],
+            "total_checks": 0,
+            "blocked": 0,
+            "warned": 0,
+            "passed": 0,
+            "block_rate": 0.0,
+            "top_violations": [],
         }
 
-    block_rate = blocked / total if total > 0 else 0.0
+    block_rate = blocked / total
+    # Derive per-type violation counts from by_layer stats when available.
+    by_layer = dict(_stats["by_layer"])
+    top_violations = [
+        {"type": layer, "count": count}
+        for layer, count in sorted(by_layer.items(), key=lambda x: x[1], reverse=True)
+    ]
     return {
         "total_checks": total,
         "blocked": blocked,
         "warned": warned,
         "passed": passed,
         "block_rate": round(block_rate, 4),
-        "top_violations": [
-            {"type": "pii", "count": blocked // 3},
-            {"type": "toxicity", "count": blocked // 4},
-            {"type": "prompt_injection", "count": blocked // 5},
-            {"type": "topic_restriction", "count": blocked // 10},
-        ],
+        "top_violations": top_violations,
     }

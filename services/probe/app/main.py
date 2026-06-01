@@ -1,26 +1,46 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 import logging
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+try:
+    import anthropic  # noqa: F401 — optional; used by _judge_llm when JUDGE_LLM_PROVIDER=anthropic
+except ImportError:
+    anthropic = None  # type: ignore[assignment]
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Arcana Probe", version="0.1.0", description="Eval framework")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
+
 
 structlog.configure(
     processors=[
@@ -32,12 +52,14 @@ structlog.configure(
 )
 log = structlog.get_logger(service="probe")
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+app = FastAPI(title="Arcana Probe", version="0.1.0", description="Eval framework")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 resource = Resource.create({SERVICE_NAME: "arcana-probe"})
 provider = TracerProvider(resource=resource)
@@ -170,15 +192,110 @@ def _judge_script(case: EvalCase) -> tuple[float, str]:
     return score, "script validation"
 
 
-def _judge_llm(case: EvalCase) -> tuple[float, str]:
-    score = min(1.0, len(case.input) / 100.0) if case.input else 0.0
-    return score, "simulated LLM grading"
+async def _judge_llm(case: EvalCase) -> tuple[float, str]:
+    """Use an LLM to judge output quality on a 0.0-1.0 scale."""
+    input_text = case.input
+    expected = case.expected or ""
+    actual = case.metadata.get("actual", "")
+
+    provider = os.getenv("JUDGE_LLM_PROVIDER", "anthropic")
+
+    grading_prompt = (
+        "You are an evaluation judge. Score the following AI output "
+        "on a scale from 0.0 to 1.0.\n\n"
+        f"Input: {input_text[:500]}\n"
+        f"Expected output: {expected[:500]}\n"
+        f"Actual output: {actual[:500]}\n\n"
+        "Score 1.0 for perfect match in meaning (not necessarily exact text).\n"
+        "Score 0.0 for completely wrong or irrelevant.\n"
+        "Score intermediate values for partial correctness.\n\n"
+        "Respond with ONLY a decimal number between 0.0 and 1.0, nothing else."
+    )
+
+    try:
+        if provider == "anthropic":
+            if anthropic is None:
+                raise ImportError(
+                    "anthropic package is required when JUDGE_LLM_PROVIDER=anthropic. "
+                    "Install with: pip install anthropic"
+                )
+            client = anthropic.AsyncAnthropic()
+            response = await client.messages.create(
+                model=os.getenv("JUDGE_MODEL", "claude-sonnet-4-20250514"),
+                max_tokens=10,
+                messages=[{"role": "user", "content": grading_prompt}],
+            )
+            score_text = response.content[0].text.strip()
+        else:
+            import httpx
+
+            base_url = os.getenv("JUDGE_API_URL", "http://localhost:11434/v1")
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                resp = await http.post(
+                    f"{base_url}/chat/completions",
+                    json={
+                        "model": os.getenv("JUDGE_MODEL", "gpt-4o-mini"),
+                        "messages": [{"role": "user", "content": grading_prompt}],
+                        "max_tokens": 10,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {os.getenv('JUDGE_API_KEY', '')}",
+                    },
+                )
+                resp.raise_for_status()
+                score_text = resp.json()["choices"][0]["message"]["content"].strip()
+
+        score = float(score_text)
+        return max(0.0, min(1.0, score)), "llm grading"
+    except Exception as e:
+        log.warning("llm_judge_fallback", error=str(e))
+        # Fallback to heuristic when LLM is unreachable
+        if not actual:
+            return 0.0, f"llm fallback (no actual output): {e}"
+        if expected and expected.lower() in actual.lower():
+            return 0.8, f"llm fallback (substring match): {e}"
+        return (
+            min(1.0, len(actual) / max(len(expected), 1) * 0.5),
+            f"llm fallback (length heuristic): {e}",
+        )
 
 
 def _judge_trajectory(case: EvalCase) -> tuple[float, str]:
-    steps = case.metadata.get("steps", 1)
-    score = 1.0 if isinstance(steps, int) and steps <= 5 else 0.6
-    return score, "trajectory step count check"
+    """Judge an agent trajectory based on efficiency and correctness."""
+    input_text = case.input
+    expected = case.expected or ""
+    actual = case.metadata.get("actual", "")
+    metadata = case.metadata
+
+    steps = metadata.get("steps", [])
+    max_steps = metadata.get("max_steps", 10)
+
+    if not isinstance(steps, list):
+        # Legacy format: steps is an int count
+        step_count = int(steps) if isinstance(steps, (int, float)) else 0
+        efficiency = max(0.0, 1.0 - (step_count / max(max_steps, 1)))
+    else:
+        step_count = len(steps)
+        efficiency = max(0.0, 1.0 - (step_count / max(max_steps, 1)))
+
+        # Check for repeated actions (sign of being stuck)
+        if step_count > 2:
+            actions = [s.get("action", "") for s in steps if isinstance(s, dict)]
+            unique_ratio = len(set(actions)) / max(len(actions), 1)
+            if unique_ratio < 0.5:
+                efficiency *= 0.5  # Penalize repetitive behavior
+
+    # Combine efficiency with output quality
+    output_score = 1.0 if actual and actual.strip() else 0.0
+    if expected and actual:
+        if expected.lower() in actual.lower():
+            output_score = 1.0
+        else:
+            output_score = 0.5
+
+    score = (efficiency * 0.4) + (output_score * 0.6)
+    detail = f"trajectory: efficiency={efficiency:.2f} output={output_score:.2f} steps={step_count}/{max_steps}"
+    return score, detail
 
 
 def _run_judge(judge: Judge, case: EvalCase) -> tuple[float, str]:
@@ -187,7 +304,8 @@ def _run_judge(judge: Judge, case: EvalCase) -> tuple[float, str]:
     if judge.tier == JudgeTier.SCRIPT:
         return _judge_script(case)
     if judge.tier == JudgeTier.LLM:
-        return _judge_llm(case)
+        # _judge_llm is async — run it in a new event loop since we are in a thread
+        return asyncio.run(_judge_llm(case))
     return _judge_trajectory(case)
 
 
@@ -271,7 +389,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/eval/run", response_model=EvalRun, status_code=201)
-async def trigger_eval(req: RunEvalRequest) -> EvalRun:
+async def trigger_eval(req: RunEvalRequest, auth: dict = _auth_dep) -> EvalRun:
     run_id = str(uuid.uuid4())
     judges = req.judges if req.judges else _default_judges()
     run = EvalRun(
@@ -288,14 +406,14 @@ async def trigger_eval(req: RunEvalRequest) -> EvalRun:
 
 
 @app.get("/api/v1/eval/runs")
-async def list_runs() -> dict[str, Any]:
+async def list_runs(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         runs = list(_runs.values())
     return {"runs": runs, "total": len(runs)}
 
 
 @app.get("/api/v1/eval/runs/{run_id}", response_model=EvalRun)
-async def get_run(run_id: str) -> EvalRun:
+async def get_run(run_id: str, auth: dict = _auth_dep) -> EvalRun:
     with _store_lock:
         run = _runs.get(run_id)
     if not run:
@@ -304,7 +422,7 @@ async def get_run(run_id: str) -> EvalRun:
 
 
 @app.get("/api/v1/eval/runs/{run_id}/report")
-async def get_report(run_id: str) -> dict[str, Any]:
+async def get_report(run_id: str, auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         run = _runs.get(run_id)
     if not run:
@@ -330,7 +448,7 @@ async def get_report(run_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/v1/eval/compare")
-async def compare_runs(req: CompareRequest) -> dict[str, Any]:
+async def compare_runs(req: CompareRequest, auth: dict = _auth_dep) -> dict[str, Any]:
     comparisons = []
     baseline_score = None
     if req.baseline_run_id:

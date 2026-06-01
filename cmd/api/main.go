@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -43,6 +46,20 @@ type ServiceRoute struct {
 
 var startTime = time.Now()
 var corsOrigin string
+
+// memoryWorkCh is a bounded channel for async memory persistence work.
+// A pool of workers drains this channel, preventing unbounded goroutine creation.
+var memoryWorkCh = make(chan func(), 100)
+
+func init() {
+	for i := 0; i < 5; i++ {
+		go func() {
+			for fn := range memoryWorkCh {
+				fn()
+			}
+		}()
+	}
+}
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -237,22 +254,41 @@ type ChatResponse struct {
 }
 
 func postJSON(baseURL, path string, body interface{}) ([]byte, int, error) {
-	payload, _ := json.Marshal(body)
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal request body: %w", err)
+	}
 	resp, err := http.Post(baseURL+path, "application/json", strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data := make([]byte, 0, 4096)
-	buf := make([]byte, 1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			data = append(data, buf[:n]...)
-		}
-		if readErr != nil {
-			break
-		}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response body: %w", err)
+	}
+	return data, resp.StatusCode, nil
+}
+
+// postJSONCtx is a context-aware variant of postJSON for use in bounded workers.
+func postJSONCtx(ctx context.Context, baseURL, path string, body interface{}) ([]byte, int, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal request body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, strings.NewReader(string(payload)))
+	if err != nil {
+		return nil, 0, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response body: %w", err)
 	}
 	return data, resp.StatusCode, nil
 }
@@ -263,16 +299,9 @@ func getJSON(baseURL, path string) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data := make([]byte, 0, 4096)
-	buf := make([]byte, 1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			data = append(data, buf[:n]...)
-		}
-		if readErr != nil {
-			break
-		}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response body: %w", err)
 	}
 	return data, resp.StatusCode, nil
 }
@@ -303,29 +332,59 @@ type AgentSetup struct {
 	ParamsAsked    bool
 }
 
-type ConversationSession struct {
-	mu       sync.Mutex
-	sessions map[string]*AgentSetup
+// sessionEntry wraps an AgentSetup with a timestamp for idle-session reaping.
+type sessionEntry struct {
+	setup        *AgentSetup
+	lastAccessed time.Time
 }
 
-var convSessions = &ConversationSession{sessions: make(map[string]*AgentSetup)}
+type ConversationSession struct {
+	mu       sync.Mutex
+	sessions map[string]*sessionEntry
+}
+
+var convSessions = &ConversationSession{sessions: make(map[string]*sessionEntry)}
 
 func (cs *ConversationSession) Get(id string) *AgentSetup {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	return cs.sessions[id]
+	entry := cs.sessions[id]
+	if entry == nil {
+		return nil
+	}
+	entry.lastAccessed = time.Now()
+	return entry.setup
 }
 
 func (cs *ConversationSession) Set(id string, s *AgentSetup) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	cs.sessions[id] = s
+	cs.sessions[id] = &sessionEntry{setup: s, lastAccessed: time.Now()}
 }
 
 func (cs *ConversationSession) Delete(id string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	delete(cs.sessions, id)
+}
+
+// startSessionReaper periodically removes sessions that have been idle
+// longer than maxAge, preventing unbounded memory growth.
+func startSessionReaper(cs *ConversationSession, interval, maxAge time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now()
+			cs.mu.Lock()
+			for id, entry := range cs.sessions {
+				if now.Sub(entry.lastAccessed) > maxAge {
+					delete(cs.sessions, id)
+				}
+			}
+			cs.mu.Unlock()
+		}
+	}()
 }
 
 func generateSessionID() string {
@@ -1054,15 +1113,20 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "I couldn't complete the search. The Codex service might be unavailable."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			hits := 0
-			if th, ok := result["total_hits"]; ok {
-				if f, ok := th.(float64); ok {
-					hits = int(f)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[chat] failed to parse codex search response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "codex-router", Message: "Invalid response from search service"})
+				reply = "Search returned an unreadable response."
+			} else {
+				hits := 0
+				if th, ok := result["total_hits"]; ok {
+					if f, ok := th.(float64); ok {
+						hits = int(f)
+					}
 				}
+				steps = append(steps, ChatStep{Type: "result", Service: "codex-router", Message: fmt.Sprintf("Found %d results across shards", hits)})
+				reply = fmt.Sprintf("Found **%d results** for \"%s\". Results are from the Codex knowledge base across multiple shards.", hits, query)
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "codex-router", Message: fmt.Sprintf("Found %d results across shards", hits)})
-			reply = fmt.Sprintf("Found **%d results** for \"%s\". Results are from the Codex knowledge base across multiple shards.", hits, query)
 		}
 
 	} else if strings.Contains(msgLower, "cost") || strings.Contains(msgLower, "spend") || strings.Contains(msgLower, "spent") || strings.Contains(msgLower, "budget") || strings.Contains(msgLower, "price") || strings.Contains(msgLower, "billing") {
@@ -1074,10 +1138,15 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't fetch the cost report. The FinOps service might be down."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			totalUSD := result["total_usd"]
-			steps = append(steps, ChatStep{Type: "result", Service: "finops", Message: fmt.Sprintf("Total spend: $%.2f", totalUSD)})
-			reply = fmt.Sprintf("Your current total platform spend is **$%.2f**. No budget alerts triggered.", totalUSD)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[chat] failed to parse finops response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "finops", Message: "Invalid response from finops service"})
+				reply = "Cost report returned an unreadable response."
+			} else {
+				totalUSD := result["total_usd"]
+				steps = append(steps, ChatStep{Type: "result", Service: "finops", Message: fmt.Sprintf("Total spend: $%.2f", totalUSD)})
+				reply = fmt.Sprintf("Your current total platform spend is **$%.2f**. No budget alerts triggered.", totalUSD)
+			}
 		}
 
 	} else if strings.Contains(msgLower, "guardrail") || strings.Contains(msgLower, "safe") {
@@ -1091,19 +1160,24 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't run the guardrail check. The Ward service might be unavailable."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			verdict := "unknown"
-			if v, ok := result["verdict"]; ok {
-				verdict = fmt.Sprintf("%v", v)
-			}
-			layers := 0
-			if lr, ok := result["layer_results"]; ok {
-				if arr, ok := lr.([]interface{}); ok {
-					layers = len(arr)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[chat] failed to parse ward response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "ward", Message: "Invalid response from guardrail service"})
+				reply = "Guardrail check returned an unreadable response."
+			} else {
+				verdict := "unknown"
+				if v, ok := result["verdict"]; ok {
+					verdict = fmt.Sprintf("%v", v)
 				}
+				layers := 0
+				if lr, ok := result["layer_results"]; ok {
+					if arr, ok := lr.([]interface{}); ok {
+						layers = len(arr)
+					}
+				}
+				steps = append(steps, ChatStep{Type: "result", Service: "ward", Message: fmt.Sprintf("Verdict: %s (%d layers checked)", verdict, layers)})
+				reply = fmt.Sprintf("Guardrail check complete. **Verdict: %s** — passed through all %d layers.", verdict, layers)
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "ward", Message: fmt.Sprintf("Verdict: %s (%d layers checked)", verdict, layers)})
-			reply = fmt.Sprintf("Guardrail check complete. **Verdict: %s** — passed through all %d layers.", verdict, layers)
 		}
 
 	} else if strings.Contains(msgLower, "eval") || strings.Contains(msgLower, "test") || strings.Contains(msgLower, "quality") {
@@ -1123,13 +1197,18 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't run the evaluation. The Probe service might be unavailable."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			runID := ""
-			if id, ok := result["run_id"]; ok {
-				runID = fmt.Sprintf("%v", id)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[chat] failed to parse probe response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "probe", Message: "Invalid response from evaluation service"})
+				reply = "Evaluation returned an unreadable response."
+			} else {
+				runID := ""
+				if id, ok := result["run_id"]; ok {
+					runID = fmt.Sprintf("%v", id)
+				}
+				steps = append(steps, ChatStep{Type: "result", Service: "probe", Message: "Evaluation run " + runID + " started"})
+				reply = fmt.Sprintf("Evaluation started for skill **%s** (run: %s). Check the Evaluations page for results.", skillRef, runID)
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "probe", Message: "Evaluation run " + runID + " started"})
-			reply = fmt.Sprintf("Evaluation started for skill **%s** (run: %s). Check the Evaluations page for results.", skillRef, runID)
 		}
 
 	} else if strings.Contains(msgLower, "status") || strings.Contains(msgLower, "health") || strings.Contains(msgLower, "running") || strings.Contains(msgLower, "everything") {
@@ -1146,15 +1225,20 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't get the platform health."
 		} else {
 			var hr HealthResp
-			json.Unmarshal(respData, &hr)
-			healthy := 0
-			for _, s := range hr.Services {
-				if s.Status == "healthy" {
-					healthy++
+			if err := json.Unmarshal(respData, &hr); err != nil {
+				log.Printf("[chat] failed to parse health response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "engine", Message: "Invalid response from health endpoint"})
+				reply = "Health check returned an unreadable response."
+			} else {
+				healthy := 0
+				for _, s := range hr.Services {
+					if s.Status == "healthy" {
+						healthy++
+					}
 				}
+				steps = append(steps, ChatStep{Type: "result", Service: "engine", Message: fmt.Sprintf("%d/%d services healthy", healthy, len(hr.Services))})
+				reply = fmt.Sprintf("Platform is healthy: **%d/%d services** running across 8 planes.", healthy, len(hr.Services))
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "engine", Message: fmt.Sprintf("%d/%d services healthy", healthy, len(hr.Services))})
-			reply = fmt.Sprintf("Platform is healthy: **%d/%d services** running across 8 planes.", healthy, len(hr.Services))
 		}
 
 	} else if strings.Contains(msgLower, "task") || strings.Contains(msgLower, "run") || strings.Contains(msgLower, "execute") {
@@ -1175,13 +1259,18 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't submit the task. The Engine service might be unavailable."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			taskID := ""
-			if id, ok := result["id"]; ok {
-				taskID = fmt.Sprintf("%v", id)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[chat] failed to parse engine task response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "engine", Message: "Invalid response from engine service"})
+				reply = "Task submission returned an unreadable response."
+			} else {
+				taskID := ""
+				if id, ok := result["id"]; ok {
+					taskID = fmt.Sprintf("%v", id)
+				}
+				steps = append(steps, ChatStep{Type: "result", Service: "engine", Message: "Task " + taskID + " submitted (status: pending)"})
+				reply = fmt.Sprintf("Task submitted to **%s** (ID: %s). The engine is processing it via Temporal workflows.", agentName, taskID)
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "engine", Message: "Task " + taskID + " submitted (status: pending)"})
-			reply = fmt.Sprintf("Task submitted to **%s** (ID: %s). The engine is processing it via Temporal workflows.", agentName, taskID)
 		}
 
 	} else if strings.Contains(msgLower, "skill") && (strings.Contains(msgLower, "register") || strings.Contains(msgLower, "create") || strings.Contains(msgLower, "add")) {
@@ -1283,7 +1372,12 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var agentInfo map[string]interface{}
-	json.Unmarshal(agentData, &agentInfo)
+	if err := json.Unmarshal(agentData, &agentInfo); err != nil {
+		log.Printf("[agent-chat] failed to parse agent info for %s: %v", agentName, err)
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid agent data from mesh service"})
+		return
+	}
 
 	sessionID := req.SessionID
 	if sessionID == "" {
@@ -1329,7 +1423,13 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 				reply = "Couldn't access my memory right now."
 			} else {
 				var stEntries []map[string]interface{}
-				json.Unmarshal(stData, &stEntries)
+				if err := json.Unmarshal(stData, &stEntries); err != nil {
+					log.Printf("[agent-chat] failed to parse short-term memory for %s: %v", agentName, err)
+					steps = append(steps, ChatStep{Type: "error", Service: "memory", Message: "Invalid response from memory service"})
+					reply = "Memory returned an unreadable response."
+					json.NewEncoder(w).Encode(AgentChatResponse{Reply: reply, Steps: steps, SessionID: sessionID, Agent: agentName})
+					return
+				}
 				steps = append(steps, ChatStep{Type: "result", Service: "memory", Message: fmt.Sprintf("Found %d short-term memories", len(stEntries))})
 				if len(stEntries) == 0 {
 					reply = fmt.Sprintf("**%s** doesn't have any memories yet. We're just getting started!", agentName)
@@ -1351,7 +1451,13 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[agent-chat] failed to parse long-term memory search for %s: %v", agentName, err)
+				steps = append(steps, ChatStep{Type: "error", Service: "memory", Message: "Invalid response from memory search"})
+				reply = "Memory search returned an unreadable response."
+				json.NewEncoder(w).Encode(AgentChatResponse{Reply: reply, Steps: steps, SessionID: sessionID, Agent: agentName})
+				return
+			}
 			results, _ := result["results"].([]interface{})
 			steps = append(steps, ChatStep{Type: "result", Service: "memory", Message: fmt.Sprintf("Found %d related memories", len(results))})
 			if len(results) == 0 {
@@ -1390,10 +1496,15 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't submit the task. The Engine service might be unavailable."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			taskID, _ := result["id"].(string)
-			steps = append(steps, ChatStep{Type: "result", Service: "engine", Message: fmt.Sprintf("Task %s submitted", taskID)})
-			reply = fmt.Sprintf("Task submitted to **%s**.\n\n- **Task ID:** `%s`\n- **Status:** queued\n- **Description:** %s", agentName, taskID, msg)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[agent-chat] failed to parse engine task response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "engine", Message: "Invalid response from engine service"})
+				reply = "Task submission returned an unreadable response."
+			} else {
+				taskID, _ := result["id"].(string)
+				steps = append(steps, ChatStep{Type: "result", Service: "engine", Message: fmt.Sprintf("Task %s submitted", taskID)})
+				reply = fmt.Sprintf("Task submitted to **%s**.\n\n- **Task ID:** `%s`\n- **Status:** queued\n- **Description:** %s", agentName, taskID, msg)
+			}
 		}
 
 	} else if strings.Contains(msgLower, "search") || strings.Contains(msgLower, "find") || strings.Contains(msgLower, "knowledge") || strings.Contains(msgLower, "look up") {
@@ -1406,15 +1517,20 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Search failed. The Codex service might be unavailable."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			hits := 0
-			if th, ok := result["total_hits"]; ok {
-				if f, ok := th.(float64); ok {
-					hits = int(f)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[agent-chat] failed to parse codex search response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "codex-router", Message: "Invalid response from search service"})
+				reply = "Search returned an unreadable response."
+			} else {
+				hits := 0
+				if th, ok := result["total_hits"]; ok {
+					if f, ok := th.(float64); ok {
+						hits = int(f)
+					}
 				}
+				steps = append(steps, ChatStep{Type: "result", Service: "codex-router", Message: fmt.Sprintf("Found %d results", hits)})
+				reply = fmt.Sprintf("**%s** searched the knowledge base and found **%d results** for \"%s\".", agentName, hits, msg)
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "codex-router", Message: fmt.Sprintf("Found %d results", hits)})
-			reply = fmt.Sprintf("**%s** searched the knowledge base and found **%d results** for \"%s\".", agentName, hits, msg)
 		}
 
 	} else if strings.Contains(msgLower, "cost") || strings.Contains(msgLower, "spend") || strings.Contains(msgLower, "budget") {
@@ -1426,10 +1542,15 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't fetch cost data."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			totalUSD, _ := result["total_usd"].(float64)
-			steps = append(steps, ChatStep{Type: "result", Service: "finops", Message: fmt.Sprintf("Agent cost: $%.4f", totalUSD)})
-			reply = fmt.Sprintf("**%s** cost to date: **$%.4f**", agentName, totalUSD)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[agent-chat] failed to parse finops response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "finops", Message: "Invalid response from finops service"})
+				reply = "Cost report returned an unreadable response."
+			} else {
+				totalUSD, _ := result["total_usd"].(float64)
+				steps = append(steps, ChatStep{Type: "result", Service: "finops", Message: fmt.Sprintf("Agent cost: $%.4f", totalUSD)})
+				reply = fmt.Sprintf("**%s** cost to date: **$%.4f**", agentName, totalUSD)
+			}
 		}
 
 	} else if strings.Contains(msgLower, "tool") || strings.Contains(msgLower, "mcp") {
@@ -1441,22 +1562,27 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't fetch available tools."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			servers := []string{}
-			if srvList, ok := result["servers"].([]interface{}); ok {
-				for _, s := range srvList {
-					if srv, ok := s.(map[string]interface{}); ok {
-						name, _ := srv["name"].(string)
-						tools := 0
-						if tl, ok := srv["tools"].([]interface{}); ok {
-							tools = len(tl)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[agent-chat] failed to parse tools response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "tools", Message: "Invalid response from tools service"})
+				reply = "Tools listing returned an unreadable response."
+			} else {
+				servers := []string{}
+				if srvList, ok := result["servers"].([]interface{}); ok {
+					for _, s := range srvList {
+						if srv, ok := s.(map[string]interface{}); ok {
+							name, _ := srv["name"].(string)
+							tools := 0
+							if tl, ok := srv["tools"].([]interface{}); ok {
+								tools = len(tl)
+							}
+							servers = append(servers, fmt.Sprintf("- **%s** (%d tools)", name, tools))
 						}
-						servers = append(servers, fmt.Sprintf("- **%s** (%d tools)", name, tools))
 					}
 				}
+				steps = append(steps, ChatStep{Type: "result", Service: "tools", Message: fmt.Sprintf("%d MCP servers available", len(servers))})
+				reply = fmt.Sprintf("MCP servers available to **%s**:\n\n%s", agentName, strings.Join(servers, "\n"))
 			}
-			steps = append(steps, ChatStep{Type: "result", Service: "tools", Message: fmt.Sprintf("%d MCP servers available", len(servers))})
-			reply = fmt.Sprintf("MCP servers available to **%s**:\n\n%s", agentName, strings.Join(servers, "\n"))
 		}
 
 	} else if strings.Contains(msgLower, "guardrail") || strings.Contains(msgLower, "safe") || strings.Contains(msgLower, "check") {
@@ -1469,10 +1595,15 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 			reply = "Couldn't run the guardrail check."
 		} else {
 			var result map[string]interface{}
-			json.Unmarshal(respData, &result)
-			verdict, _ := result["verdict"].(string)
-			steps = append(steps, ChatStep{Type: "result", Service: "ward", Message: fmt.Sprintf("Verdict: %s", verdict)})
-			reply = fmt.Sprintf("Guardrail check for **%s**: **%s**", agentName, verdict)
+			if err := json.Unmarshal(respData, &result); err != nil {
+				log.Printf("[agent-chat] failed to parse ward response: %v", err)
+				steps = append(steps, ChatStep{Type: "error", Service: "ward", Message: "Invalid response from guardrail service"})
+				reply = "Guardrail check returned an unreadable response."
+			} else {
+				verdict, _ := result["verdict"].(string)
+				steps = append(steps, ChatStep{Type: "result", Service: "ward", Message: fmt.Sprintf("Verdict: %s", verdict)})
+				reply = fmt.Sprintf("Guardrail check for **%s**: **%s**", agentName, verdict)
+			}
 		}
 
 	} else {
@@ -1498,21 +1629,38 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	memHost := envOr("MEMORY_HOST", "arcana-memory")
 	memBase := fmt.Sprintf("http://%s:8087", memHost)
-	go func(base, agent, sid, userMsg, botReply string, hasSteps bool) {
-		postJSON(base, "/api/v1/memory/short-term", map[string]interface{}{
-			"agent_id": agent, "key": "user:" + sid, "value": userMsg, "ttl": 3600,
-		})
-		postJSON(base, "/api/v1/memory/short-term", map[string]interface{}{
-			"agent_id": agent, "key": "bot:" + sid, "value": botReply, "ttl": 3600,
-		})
-		if hasSteps {
-			postJSON(base, "/api/v1/memory/long-term", map[string]interface{}{
-				"agent_id": agent,
-				"content":  fmt.Sprintf("User asked: %s | Agent replied: %s", userMsg, botReply),
-				"metadata": map[string]interface{}{"session_id": sid, "type": "conversation"},
-			})
+	memAgent := agentName
+	memSID := sessionID
+	memMsg := msg
+	memReply := reply
+	memHasSteps := steps != nil && len(steps) > 0
+	select {
+	case memoryWorkCh <- func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, _, err := postJSONCtx(ctx, memBase, "/api/v1/memory/short-term", map[string]interface{}{
+			"agent_id": memAgent, "key": "user:" + memSID, "value": memMsg, "ttl": 3600,
+		}); err != nil {
+			log.Printf("[memory] failed to store user message: %v", err)
 		}
-	}(memBase, agentName, sessionID, msg, reply, steps != nil && len(steps) > 0)
+		if _, _, err := postJSONCtx(ctx, memBase, "/api/v1/memory/short-term", map[string]interface{}{
+			"agent_id": memAgent, "key": "bot:" + memSID, "value": memReply, "ttl": 3600,
+		}); err != nil {
+			log.Printf("[memory] failed to store bot reply: %v", err)
+		}
+		if memHasSteps {
+			if _, _, err := postJSONCtx(ctx, memBase, "/api/v1/memory/long-term", map[string]interface{}{
+				"agent_id": memAgent,
+				"content":  fmt.Sprintf("User asked: %s | Agent replied: %s", memMsg, memReply),
+				"metadata": map[string]interface{}{"session_id": memSID, "type": "conversation"},
+			}); err != nil {
+				log.Printf("[memory] failed to store long-term memory: %v", err)
+			}
+		}
+	}:
+	default:
+		log.Printf("[memory] work queue full, dropping memory store for session %s", memSID)
+	}
 
 	json.NewEncoder(w).Encode(AgentChatResponse{Reply: reply, Steps: steps, SessionID: sessionID, Agent: agentName})
 }
@@ -1520,8 +1668,15 @@ func agentChatHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	corsOrigin = os.Getenv("CORS_ORIGIN")
 	if corsOrigin == "" {
+		if os.Getenv("ARCANA_ENV") == "production" {
+			fmt.Fprintln(os.Stderr, "FATAL: CORS_ORIGIN must be set in production (wildcard '*' is not allowed)")
+			os.Exit(1)
+		}
 		corsOrigin = "*"
 	}
+
+	// Reap idle conversation sessions every minute; expire after 30 minutes.
+	startSessionReaper(convSessions, time.Minute, 30*time.Minute)
 
 	enterprise := NewEnterpriseGateway()
 
@@ -1537,6 +1692,18 @@ func main() {
 	}))
 
 	enterprise.RegisterRoutes(httpSrv)
+
+	httpSrv.HandleFunc("/api/v1/webhooks/alerts/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		severity := strings.TrimPrefix(r.URL.Path, "/api/v1/webhooks/alerts/")
+		body, _ := io.ReadAll(r.Body)
+		log.Printf("alert webhook received: severity=%s payload=%s", severity, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"accepted","severity":%q}`, severity)
+	})
 
 	httpSrv.HandleFunc("/api/v1/health", enterprise.AuthMiddleware(cors(healthHandler)))
 	httpSrv.HandleFunc("/api/v1/routes", enterprise.AuthMiddleware(cors(routesHandler)))

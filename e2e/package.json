@@ -1,15 +1,21 @@
 {
   "name": "e2e",
   "version": "1.0.0",
-  "description": "",
+  "description": "BDD and E2E tests for Arcana platform",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "bddgen": "npx bddgen",
+    "test": "npx bddgen && npx playwright test --project=bdd",
+    "test:existing": "npx playwright test --project=existing",
+    "test:all": "npx bddgen && npx playwright test",
+    "test:smoke": "npx bddgen --tags @smoke && npx playwright test --project=bdd",
+    "test:visual": "npx bddgen && npx playwright test --project=bdd --update-snapshots"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.60.0",
+    "playwright-bdd": "^8.1.0"
   }
 }

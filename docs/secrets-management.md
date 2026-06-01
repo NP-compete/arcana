@@ -1,6 +1,6 @@
 # Secrets Management
 
-Arcana supports two secrets management modes: **development** (Kubernetes Secrets) and **production** (External Secrets Operator).
+Arcana never stores secrets in code or config files. In development, secrets live in Kubernetes Secrets applied during setup. In production, External Secrets Operator syncs secrets from your vault of choice — zero manual handling.
 
 ## Development
 

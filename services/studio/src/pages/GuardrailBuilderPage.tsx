@@ -284,7 +284,7 @@ export const GuardrailBuilderPage = () => {
         }
       })
       .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---- Fetch rules for selected agent ---- */
   const fetchRules = useCallback(async () => {

@@ -211,3 +211,152 @@ func TestMiddlewareChainOrder(t *testing.T) {
 		t.Error("handler should have received request ID from middleware")
 	}
 }
+
+func TestRateLimiting_AllowsNormalTraffic(t *testing.T) {
+	srv := New(Config{ServiceName: "test", Port: "0", RateLimitPerSecond: 50})
+	srv.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := srv.buildMiddlewareChain(srv.mux)
+
+	// Send a small number of requests well within the limit
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("request %d: got %d, want 200", i, rec.Code)
+		}
+	}
+}
+
+func TestRateLimiting_BlocksExcessTraffic(t *testing.T) {
+	// Set a very low rate limit so we can exhaust the bucket quickly
+	srv := New(Config{ServiceName: "test", Port: "0", RateLimitPerSecond: 3})
+	srv.HandleFunc("/limited", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := srv.buildMiddlewareChain(srv.mux)
+
+	var blocked int
+	// Send more requests than the bucket capacity in rapid succession
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/limited", nil)
+		req.RemoteAddr = "10.0.0.2:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code == http.StatusTooManyRequests {
+			blocked++
+		}
+	}
+
+	if blocked == 0 {
+		t.Error("expected at least one request to be rate limited (429)")
+	}
+}
+
+func TestRateLimiting_Disabled(t *testing.T) {
+	// Negative RateLimitPerSecond disables rate limiting
+	srv := New(Config{ServiceName: "test", Port: "0", RateLimitPerSecond: -1})
+	srv.HandleFunc("/nolimit", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := srv.buildMiddlewareChain(srv.mux)
+
+	for i := 0; i < 100; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/nolimit", nil)
+		req.RemoteAddr = "10.0.0.3:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("request %d: got %d, want 200 (rate limiting should be disabled)", i, rec.Code)
+		}
+	}
+}
+
+func TestRateLimiting_RetryAfterHeader(t *testing.T) {
+	srv := New(Config{ServiceName: "test", Port: "0", RateLimitPerSecond: 2})
+	srv.HandleFunc("/retry", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := srv.buildMiddlewareChain(srv.mux)
+
+	// Exhaust the bucket
+	for i := 0; i < 20; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/retry", nil)
+		req.RemoteAddr = "10.0.0.4:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code == http.StatusTooManyRequests {
+			retryAfter := rec.Header().Get("Retry-After")
+			if retryAfter == "" {
+				t.Error("429 response missing Retry-After header")
+			}
+			if retryAfter != "1" {
+				t.Errorf("Retry-After: got %q, want %q", retryAfter, "1")
+			}
+
+			// Verify response body contains error message
+			var body map[string]string
+			if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+				t.Fatalf("decode 429 body: %v", err)
+			}
+			if body["error"] != "rate limit exceeded" {
+				t.Errorf("error message: got %q, want %q", body["error"], "rate limit exceeded")
+			}
+			return
+		}
+	}
+	t.Error("never received a 429 response")
+}
+
+func TestRateLimiting_PerIP(t *testing.T) {
+	// Small bucket so one IP exhausts quickly
+	srv := New(Config{ServiceName: "test", Port: "0", RateLimitPerSecond: 3})
+	srv.HandleFunc("/perip", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := srv.buildMiddlewareChain(srv.mux)
+
+	// Exhaust the bucket for IP-A
+	var ipABlocked int
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/perip", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			ipABlocked++
+		}
+	}
+
+	if ipABlocked == 0 {
+		t.Error("expected IP-A to be rate limited")
+	}
+
+	// IP-B should still have its own fresh bucket
+	var ipBBlocked int
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/perip", nil)
+		req.RemoteAddr = "192.168.1.2:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			ipBBlocked++
+		}
+	}
+
+	if ipBBlocked > 0 {
+		t.Error("IP-B should not be rate limited - it has a separate bucket from IP-A")
+	}
+}

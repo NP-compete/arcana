@@ -1,0 +1,23 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: arcanarequireprobes
+spec:
+  crd:
+    spec:
+      names:
+        kind: ArcanaRequireProbes
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package arcanarequireprobes
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.livenessProbe
+          msg := sprintf("Container %v has no liveness probe", [container.name])
+        }
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.readinessProbe
+          msg := sprintf("Container %v has no readiness probe", [container.name])
+        }

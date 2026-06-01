@@ -8,11 +8,22 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 )
+
+var validAgentName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+var reservedNames = map[string]bool{
+	"kube-system":     true,
+	"kube-public":     true,
+	"kube-node-lease": true,
+	"default":         true,
+	"arcana":          true,
+}
 
 func corsOrigin() string {
 	if origin := os.Getenv("CORS_ORIGIN"); origin != "" {
@@ -83,6 +94,18 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if !validAgentName.MatchString(req.Name) {
+		writeError(w, http.StatusBadRequest, "name must match DNS label format: lowercase alphanumeric and hyphens, 1-63 chars, must start and end with alphanumeric")
+		return
+	}
+	if reservedNames[req.Name] {
+		writeError(w, http.StatusBadRequest, "name is reserved and cannot be used")
+		return
+	}
+	if len(req.Capabilities) > 100 {
+		writeError(w, http.StatusBadRequest, "capabilities list exceeds maximum of 100 entries")
 		return
 	}
 
@@ -169,6 +192,17 @@ func (s *Server) provisionAgentNamespace(agent *MeshAgent) {
 
 	if agent.AgentType == AgentTypeDeep && agent.DeepConfig != nil {
 		s.provisionDeepAgentPod(ns, agent)
+	}
+
+	baseDomain := os.Getenv("ARCANA_BASE_DOMAIN")
+	if baseDomain == "" {
+		baseDomain = "arcana.localhost.me"
+	}
+	agentHost := agent.Name + "." + baseDomain
+	if err := s.k8s.CreateIngress(ns, "agent-ingress", agentHost, "deep-agent", 5002); err != nil {
+		log.Printf("failed to create ingress in %s: %v", ns, err)
+	} else {
+		log.Printf("ingress created: %s → deep-agent:5002 in %s", agentHost, ns)
 	}
 
 	log.Printf("agent %s fully provisioned in namespace %s", agent.Name, ns)

@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-All 18 Go services in the Arcana platform started HTTP servers using the bare `log.Fatal(http.ListenAndServe(...))` pattern. This caused several production-readiness issues:
+Arcana runs 18+ Go services in production. All of them started HTTP servers using the bare `log.Fatal(http.ListenAndServe(...))` pattern. This caused several production-readiness issues:
 
 - **No graceful shutdown**: Services terminated immediately on SIGTERM, dropping in-flight requests during Kubernetes rolling updates
 - **No HTTP timeouts**: Servers were vulnerable to slowloris attacks and resource exhaustion from idle connections
