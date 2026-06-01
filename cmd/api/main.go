@@ -1693,6 +1693,18 @@ func main() {
 
 	enterprise.RegisterRoutes(httpSrv)
 
+	httpSrv.HandleFunc("/api/v1/webhooks/alerts/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		severity := strings.TrimPrefix(r.URL.Path, "/api/v1/webhooks/alerts/")
+		body, _ := io.ReadAll(r.Body)
+		log.Printf("alert webhook received: severity=%s payload=%s", severity, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"accepted","severity":%q}`, severity)
+	})
+
 	httpSrv.HandleFunc("/api/v1/health", enterprise.AuthMiddleware(cors(healthHandler)))
 	httpSrv.HandleFunc("/api/v1/routes", enterprise.AuthMiddleware(cors(routesHandler)))
 	httpSrv.HandleFunc("/api/v1/chat", enterprise.AuthMiddleware(chatHandler))

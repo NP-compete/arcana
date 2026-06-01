@@ -22,7 +22,7 @@ env:
   POSTGRES_HOST: "postgres.arcana.svc.cluster.local"
   POSTGRES_PORT: "5432"
   REDIS_HOST: "redis.arcana.svc.cluster.local"
-  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger.arcana.svc.cluster.local:4318"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger.arcana.svc.cluster.local:4318"
 
 envFromSecrets:
   - arcana-platform-secret

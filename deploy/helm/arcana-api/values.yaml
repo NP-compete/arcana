@@ -46,7 +46,7 @@ env:
   REGISTRY_HOST: "arcana-registry.arcana.svc.cluster.local"
   FINOPS_HOST: "arcana-finops.arcana.svc.cluster.local"
   GITOPS_HOST: "arcana-gitops.arcana.svc.cluster.local"
-  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger.arcana.svc.cluster.local:4318"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger.arcana.svc.cluster.local:4318"
 
 envFromSecrets:
   - arcana-platform-secret
