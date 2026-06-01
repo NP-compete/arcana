@@ -2,6 +2,11 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default [
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: "off",
+    },
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -11,9 +16,6 @@ export default [
       "@typescript-eslint/no-explicit-any": "off",
       "no-console": "off",
       "no-useless-escape": "off",
-    },
-    linterOptions: {
-      reportUnusedDisableDirectives: "off",
     },
   },
   {
