@@ -10,6 +10,10 @@ export default [
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
       "@typescript-eslint/no-explicit-any": "off",
       "no-console": "off",
+      "no-useless-escape": "off",
+    },
+    linterOptions: {
+      reportUnusedDisableDirectives: "off",
     },
   },
   {
