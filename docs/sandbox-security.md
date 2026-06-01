@@ -1,12 +1,10 @@
 # Sandbox Security Architecture
 
-## Overview
+AI agents run code. That code can't be trusted. Arcana's sandbox service ensures untrusted execution happens in complete isolation — every request gets its own ephemeral pod with kernel-level protection.
 
-The Arcana sandbox service executes untrusted user code in isolated environments.
 In production, each execution request spawns an ephemeral Kubernetes pod with
-gVisor runtime isolation. In development environments without a Kubernetes
-cluster, the service falls back to local process execution with a sanitized
-environment.
+gVisor runtime isolation. In development, the service falls back to local
+process execution with a sanitized environment.
 
 ## Architecture
 
