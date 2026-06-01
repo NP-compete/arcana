@@ -29,6 +29,8 @@ from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 def _cors_origins() -> list[str]:
     origins = os.getenv("CORS_ORIGINS", "*")
@@ -355,7 +357,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/experiments", response_model=Experiment, status_code=201)
-async def create_experiment(req: CreateExperimentRequest, auth: dict = Depends(require_auth)) -> Experiment:
+async def create_experiment(req: CreateExperimentRequest, auth: dict = _auth_dep) -> Experiment:
     with _store_lock:
         if req.dataset not in _datasets:
             raise HTTPException(status_code=404, detail="dataset not found")
@@ -377,14 +379,14 @@ async def create_experiment(req: CreateExperimentRequest, auth: dict = Depends(r
 
 
 @app.get("/api/v1/experiments")
-async def list_experiments(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_experiments(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         exps = list(_experiments.values())
     return {"experiments": exps, "total": len(exps)}
 
 
 @app.get("/api/v1/experiments/{exp_id}", response_model=Experiment)
-async def get_experiment(exp_id: str, auth: dict = Depends(require_auth)) -> Experiment:
+async def get_experiment(exp_id: str, auth: dict = _auth_dep) -> Experiment:
     with _store_lock:
         exp = _experiments.get(exp_id)
     if not exp:
@@ -393,7 +395,7 @@ async def get_experiment(exp_id: str, auth: dict = Depends(require_auth)) -> Exp
 
 
 @app.post("/api/v1/experiments/{exp_id}/cancel", response_model=Experiment)
-async def cancel_experiment(exp_id: str, auth: dict = Depends(require_auth)) -> Experiment:
+async def cancel_experiment(exp_id: str, auth: dict = _auth_dep) -> Experiment:
     with _store_lock:
         exp = _experiments.get(exp_id)
         if not exp:
@@ -406,14 +408,14 @@ async def cancel_experiment(exp_id: str, auth: dict = Depends(require_auth)) -> 
 
 
 @app.get("/api/v1/datasets")
-async def list_datasets(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_datasets(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         ds = list(_datasets.values())
     return {"datasets": ds, "total": len(ds)}
 
 
 @app.post("/api/v1/datasets", response_model=Dataset, status_code=201)
-async def register_dataset(req: RegisterDatasetRequest, auth: dict = Depends(require_auth)) -> Dataset:
+async def register_dataset(req: RegisterDatasetRequest, auth: dict = _auth_dep) -> Dataset:
     with _store_lock:
         ds_id = str(uuid.uuid4())
         ds = Dataset(

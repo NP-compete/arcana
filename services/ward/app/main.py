@@ -30,6 +30,8 @@ from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 def _cors_origins() -> list[str]:
     origins = os.getenv("CORS_ORIGINS", "*")
@@ -451,7 +453,7 @@ async def readyz() -> dict[str, str]:
 
 
 @app.post("/api/v1/check", response_model=GuardrailCheck)
-async def run_check(req: CheckRequest, auth: dict = Depends(require_auth)) -> GuardrailCheck:
+async def run_check(req: CheckRequest, auth: dict = _auth_dep) -> GuardrailCheck:
     with _store_lock:
         check = _run_pipeline(req.text, req.agent_id, req.direction, req.context)
         _update_stats(check)
@@ -459,14 +461,14 @@ async def run_check(req: CheckRequest, auth: dict = Depends(require_auth)) -> Gu
 
 
 @app.get("/api/v1/rules")
-async def list_rules(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_rules(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         rules = list(_rules.values())
     return {"rules": rules, "total": len(rules)}
 
 
 @app.post("/api/v1/rules", response_model=GuardrailRule, status_code=201)
-async def create_rule(req: CreateRuleRequest, auth: dict = Depends(require_auth)) -> GuardrailRule:
+async def create_rule(req: CreateRuleRequest, auth: dict = _auth_dep) -> GuardrailRule:
     with _store_lock:
         rule_id = str(uuid.uuid4())
         rule = GuardrailRule(
@@ -478,14 +480,14 @@ async def create_rule(req: CreateRuleRequest, auth: dict = Depends(require_auth)
 
 
 @app.get("/api/v1/rules/agent/{agent_id}")
-async def list_agent_rules(agent_id: str, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_agent_rules(agent_id: str, auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         rules = [r for r in _rules.values() if r.agent_id in (agent_id, "*")]
     return {"rules": rules, "total": len(rules), "agent_id": agent_id}
 
 
 @app.delete("/api/v1/rules/{rule_id}")
-async def delete_rule(rule_id: str, auth: dict = Depends(require_auth)) -> dict[str, str]:
+async def delete_rule(rule_id: str, auth: dict = _auth_dep) -> dict[str, str]:
     with _store_lock:
         if rule_id not in _rules:
             raise HTTPException(status_code=404, detail="rule not found")
@@ -494,7 +496,7 @@ async def delete_rule(rule_id: str, auth: dict = Depends(require_auth)) -> dict[
 
 
 @app.get("/api/v1/stats", response_model=GuardrailStats)
-async def get_stats(auth: dict = Depends(require_auth)) -> GuardrailStats:
+async def get_stats(auth: dict = _auth_dep) -> GuardrailStats:
     with _store_lock:
         return GuardrailStats(
             checks_total=_stats["checks_total"],
@@ -509,7 +511,7 @@ async def get_stats(auth: dict = Depends(require_auth)) -> GuardrailStats:
 
 
 @app.get("/api/v1/ward/agents/{name}/rules")
-async def get_agent_rules(name: str, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def get_agent_rules(name: str, auth: dict = _auth_dep) -> dict[str, Any]:
     """Get guardrail rules for an agent."""
     if pool:
         rows = await pool.fetch(
@@ -534,7 +536,7 @@ async def get_agent_rules(name: str, auth: dict = Depends(require_auth)) -> dict
 
 
 @app.put("/api/v1/ward/agents/{name}/rules")
-async def set_agent_rules(name: str, request: Request, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def set_agent_rules(name: str, request: Request, auth: dict = _auth_dep) -> dict[str, Any]:
     """Set guardrail rules for an agent."""
     body = await request.json()
     rules = body.get("rules", [])
@@ -563,7 +565,7 @@ async def set_agent_rules(name: str, request: Request, auth: dict = Depends(requ
 
 
 @app.post("/api/v1/ward/evaluate")
-async def evaluate_input(request: Request, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def evaluate_input(request: Request, auth: dict = _auth_dep) -> dict[str, Any]:
     """Test input against guardrail rules."""
     body = await request.json()
     text = body.get("text", "")
@@ -615,7 +617,7 @@ async def evaluate_input(request: Request, auth: dict = Depends(require_auth)) -
 
 
 @app.get("/api/v1/ward/stats")
-async def ward_stats(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def ward_stats(auth: dict = _auth_dep) -> dict[str, Any]:
     """Get overall ward statistics."""
     with _store_lock:
         total = _stats["checks_total"]

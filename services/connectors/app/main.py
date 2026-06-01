@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 class ConnectorType(StrEnum):
     GDRIVE = "gdrive"
@@ -139,7 +141,7 @@ class PostgresConnector(ConnectorPlugin):
             )
             total_rows = 0
             for t in tables:
-                count = await conn.fetchval(
+                count = await conn.fetchval(  # noqa: S608  # nosec B608 - values from pg_tables, not user input
                     f'SELECT COUNT(*) FROM "{t["schemaname"]}"."{t["tablename"]}"'
                 )
                 total_rows += count
@@ -323,12 +325,12 @@ async def healthz() -> dict[str, str]:
 
 
 @app.get("/api/v1/connectors")
-async def list_connector_types(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_connector_types(auth: dict = _auth_dep) -> dict[str, Any]:
     return {"connectors": TIER1_CONNECTORS, "count": len(TIER1_CONNECTORS)}
 
 
 @app.post("/api/v1/connectors", status_code=201)
-async def register_connector(req: RegisterConnectorRequest, auth: dict = Depends(require_auth)) -> ConnectorInstance:
+async def register_connector(req: RegisterConnectorRequest, auth: dict = _auth_dep) -> ConnectorInstance:
     if req.name in _store:
         raise HTTPException(status_code=409, detail=f"connector '{req.name}' already exists")
     instance = ConnectorInstance(
@@ -343,7 +345,7 @@ async def register_connector(req: RegisterConnectorRequest, auth: dict = Depends
 
 
 @app.get("/api/v1/connectors/{name}")
-async def get_connector(name: str, auth: dict = Depends(require_auth)) -> ConnectorInstance:
+async def get_connector(name: str, auth: dict = _auth_dep) -> ConnectorInstance:
     instance = _store.get(name)
     if instance is None:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
@@ -351,7 +353,7 @@ async def get_connector(name: str, auth: dict = Depends(require_auth)) -> Connec
 
 
 @app.post("/api/v1/connectors/{name}/sync")
-async def trigger_sync(name: str, auth: dict = Depends(require_auth)) -> SyncResult:
+async def trigger_sync(name: str, auth: dict = _auth_dep) -> SyncResult:
     instance = _store.get(name)
     if instance is None:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
@@ -392,7 +394,7 @@ async def trigger_sync(name: str, auth: dict = Depends(require_auth)) -> SyncRes
 
 
 @app.delete("/api/v1/connectors/{name}", status_code=204)
-async def remove_connector(name: str, auth: dict = Depends(require_auth)) -> Response:
+async def remove_connector(name: str, auth: dict = _auth_dep) -> Response:
     if name not in _store:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")
     del _store[name]
@@ -400,7 +402,7 @@ async def remove_connector(name: str, auth: dict = Depends(require_auth)) -> Res
 
 
 @app.get("/api/v1/connectors/{name}/health")
-async def connector_health(name: str, auth: dict = Depends(require_auth)) -> ConnectorHealth:
+async def connector_health(name: str, auth: dict = _auth_dep) -> ConnectorHealth:
     instance = _store.get(name)
     if instance is None:
         raise HTTPException(status_code=404, detail=f"connector '{name}' not found")

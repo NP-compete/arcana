@@ -1,10 +1,18 @@
 """Tests for the Arcana Connectors service with real connector plugin system."""
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Ensure boto3 is importable for patching even if not installed
+if "boto3" not in sys.modules:
+    _mock_boto3 = types.ModuleType("boto3")
+    _mock_boto3.client = MagicMock()
+    sys.modules["boto3"] = _mock_boto3
 
 from app.main import (
     ConnectorPlugin,

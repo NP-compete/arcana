@@ -31,6 +31,8 @@ from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 def _cors_origins() -> list[str]:
     origins = os.getenv("CORS_ORIGINS", "*")
@@ -252,7 +254,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/models", response_model=ModelCard, status_code=201)
-async def register_model(req: RegisterModelRequest, auth: dict = Depends(require_auth)) -> ModelCard:
+async def register_model(req: RegisterModelRequest, auth: dict = _auth_dep) -> ModelCard:
     with _store_lock:
         if req.name in _models:
             raise HTTPException(status_code=409, detail="model already registered")
@@ -270,14 +272,14 @@ async def register_model(req: RegisterModelRequest, auth: dict = Depends(require
 
 
 @app.get("/api/v1/models")
-async def list_models(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_models(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         models = list(_models.values())
     return {"models": models, "total": len(models)}
 
 
 @app.get("/api/v1/models/{name}", response_model=ModelCard)
-async def get_model(name: str, auth: dict = Depends(require_auth)) -> ModelCard:
+async def get_model(name: str, auth: dict = _auth_dep) -> ModelCard:
     with _store_lock:
         card = _models.get(name)
     if not card:
@@ -286,7 +288,7 @@ async def get_model(name: str, auth: dict = Depends(require_auth)) -> ModelCard:
 
 
 @app.post("/api/v1/models/{name}/promote", response_model=ModelCard)
-async def promote_model(name: str, req: PromoteRequest, auth: dict = Depends(require_auth)) -> ModelCard:
+async def promote_model(name: str, req: PromoteRequest, auth: dict = _auth_dep) -> ModelCard:
     with _store_lock:
         card = _models.get(name)
         if not card:
@@ -298,7 +300,7 @@ async def promote_model(name: str, req: PromoteRequest, auth: dict = Depends(req
 
 
 @app.delete("/api/v1/models/{name}")
-async def deregister_model(name: str, auth: dict = Depends(require_auth)) -> dict[str, str]:
+async def deregister_model(name: str, auth: dict = _auth_dep) -> dict[str, str]:
     with _store_lock:
         if name not in _models:
             raise HTTPException(status_code=404, detail="model not found")
@@ -307,7 +309,7 @@ async def deregister_model(name: str, auth: dict = Depends(require_auth)) -> dic
 
 
 @app.post("/api/v1/models/{name}/predict")
-async def predict(name: str, req: PredictRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def predict(name: str, req: PredictRequest, auth: dict = _auth_dep) -> dict[str, Any]:
     global _tokens_used, _cost
     with _store_lock:
         card = _models.get(name)
@@ -377,7 +379,7 @@ async def predict(name: str, req: PredictRequest, auth: dict = Depends(require_a
 
 
 @app.get("/api/v1/budget", response_model=BudgetStatus)
-async def get_budget(auth: dict = Depends(require_auth)) -> BudgetStatus:
+async def get_budget(auth: dict = _auth_dep) -> BudgetStatus:
     with _store_lock:
         return BudgetStatus(
             tokens_used=_tokens_used,
@@ -388,7 +390,7 @@ async def get_budget(auth: dict = Depends(require_auth)) -> BudgetStatus:
 
 
 @app.post("/api/v1/budget/fallback", response_model=FallbackChain)
-async def configure_fallback(req: FallbackConfigRequest, auth: dict = Depends(require_auth)) -> FallbackChain:
+async def configure_fallback(req: FallbackConfigRequest, auth: dict = _auth_dep) -> FallbackChain:
     global _fallback_chain
     with _store_lock:
         _fallback_chain = FallbackChain(models=req.models, thresholds=req.thresholds)

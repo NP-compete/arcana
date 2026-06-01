@@ -32,6 +32,8 @@ log = structlog.get_logger(service="skills")
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 def _cors_origins() -> list[str]:
     origins = os.getenv("CORS_ORIGINS", "*")
@@ -187,7 +189,7 @@ skills_db: dict[str, dict] = {}
 
 
 @app.get("/api/v1/skills")
-async def list_skills(auth: dict = Depends(require_auth)):
+async def list_skills(auth: dict = _auth_dep):
     """Return all registered skills."""
     if pool:
         rows = await pool.fetch(
@@ -201,7 +203,7 @@ async def list_skills(auth: dict = Depends(require_auth)):
 
 
 @app.get("/api/v1/skills/{name}")
-async def get_skill(name: str, auth: dict = Depends(require_auth)):
+async def get_skill(name: str, auth: dict = _auth_dep):
     """Return a single skill by name."""
     if pool:
         row = await pool.fetchrow("SELECT * FROM skills WHERE name = $1", name)
@@ -220,7 +222,7 @@ async def get_skill(name: str, auth: dict = Depends(require_auth)):
 
 
 @app.post("/api/v1/skills/create-reactive")
-async def create_reactive_skill(request: Request, auth: dict = Depends(require_auth)):
+async def create_reactive_skill(request: Request, auth: dict = _auth_dep):
     """Agent calls this when it needs a skill that does not exist.
 
     Generates SKILL.md from the description, runs basic tests, registers
@@ -288,7 +290,7 @@ async def create_reactive_skill(request: Request, auth: dict = Depends(require_a
 
 
 @app.post("/api/v1/skills/crystallize")
-async def crystallize_skills(request: Request, auth: dict = Depends(require_auth)):
+async def crystallize_skills(request: Request, auth: dict = _auth_dep):
     """Nightly job: analyse annotation cache for repeated corrections,
     crystallise into skills."""
     body = await request.json()
@@ -333,7 +335,7 @@ async def crystallize_skills(request: Request, auth: dict = Depends(require_auth
 
 
 @app.post("/api/v1/skills/merge")
-async def merge_skills(request: Request, auth: dict = Depends(require_auth)):
+async def merge_skills(request: Request, auth: dict = _auth_dep):
     """Merge two similar skills into one."""
     body = await request.json()
     skill_a = body.get("skill_a", "")
@@ -395,7 +397,7 @@ async def merge_skills(request: Request, auth: dict = Depends(require_auth)):
 
 
 @app.post("/api/v1/skills/prune")
-async def prune_skills(request: Request, auth: dict = Depends(require_auth)):
+async def prune_skills(request: Request, auth: dict = _auth_dep):
     """Archive skills unused for 90+ days or with >50% failure rate."""
     body = await request.json()
     unused_days = body.get("unused_days", 90)
@@ -428,7 +430,7 @@ async def prune_skills(request: Request, auth: dict = Depends(require_auth)):
 
 
 @app.post("/api/v1/skills/{name}/transfer")
-async def transfer_skill(name: str, request: Request, auth: dict = Depends(require_auth)):
+async def transfer_skill(name: str, request: Request, auth: dict = _auth_dep):
     """Transfer a skill to another agent with validation."""
     if pool:
         skill = await pool.fetchrow("SELECT * FROM skills WHERE name = $1", name)
@@ -461,7 +463,7 @@ async def transfer_skill(name: str, request: Request, auth: dict = Depends(requi
 
 
 @app.post("/api/v1/skills/{name}/memory")
-async def append_skill_memory(name: str, request: Request, auth: dict = Depends(require_auth)):
+async def append_skill_memory(name: str, request: Request, auth: dict = _auth_dep):
     """Append usage note to skill's experiential memory."""
     body = await request.json()
     entry = body.get("entry", "")
@@ -495,7 +497,7 @@ async def append_skill_memory(name: str, request: Request, auth: dict = Depends(
 
 
 @app.get("/api/v1/skills/{name}/memory")
-async def get_skill_memory(name: str, auth: dict = Depends(require_auth)):
+async def get_skill_memory(name: str, auth: dict = _auth_dep):
     """Get skill's experiential memory."""
     if pool:
         row = await pool.fetchrow("SELECT memory FROM skills WHERE name = $1", name)
@@ -519,7 +521,7 @@ async def list_marketplace(
     category: str = "all",
     type: str = "all",
     q: str = "",
-    auth: dict = Depends(require_auth),
+    auth: dict = _auth_dep,
 ):
     """Browse marketplace items."""
     if pool:

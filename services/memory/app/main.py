@@ -27,6 +27,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
 from _shared.embeddings import cosine_similarity, embed_text, embedding_dim  # noqa: F401
 
 
@@ -333,7 +335,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/memory/short-term", response_model=ShortTermEntry, status_code=201)
-async def store_short_term(req: ShortTermStoreRequest, auth: dict = Depends(require_auth)) -> ShortTermEntry:
+async def store_short_term(req: ShortTermStoreRequest, auth: dict = _auth_dep) -> ShortTermEntry:
     if req.ttl <= 0:
         raise HTTPException(status_code=400, detail="ttl must be positive")
     entry = store.store_short_term(req.agent_id, req.key, req.value, req.ttl)
@@ -348,12 +350,12 @@ async def store_short_term(req: ShortTermStoreRequest, auth: dict = Depends(requ
 
 
 @app.get("/api/v1/memory/short-term/{agent_id}", response_model=list[ShortTermEntry])
-async def get_short_term(agent_id: str, auth: dict = Depends(require_auth)) -> list[ShortTermEntry]:
+async def get_short_term(agent_id: str, auth: dict = _auth_dep) -> list[ShortTermEntry]:
     return store.get_short_term(agent_id)
 
 
 @app.post("/api/v1/memory/long-term", response_model=LongTermMemory, status_code=201)
-async def store_long_term(req: LongTermStoreRequest, auth: dict = Depends(require_auth)) -> LongTermMemory:
+async def store_long_term(req: LongTermStoreRequest, auth: dict = _auth_dep) -> LongTermMemory:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content is required")
     memory = store.store_long_term(req.agent_id, req.content, req.metadata, req.embedding)
@@ -372,7 +374,7 @@ async def search_long_term(
     agent_id: str,
     query: str = Query(..., min_length=1),
     top_k: int = Query(default=5, ge=1, le=50),
-    auth: dict = Depends(require_auth),
+    auth: dict = _auth_dep,
 ) -> SearchResponse:
     # Always use in-memory search for vector similarity; DB is used as
     # persistence backing but the embedding search stays in-process.
@@ -381,14 +383,14 @@ async def search_long_term(
 
 
 @app.post("/api/v1/memory/skill/{skill_name}", response_model=SkillMemory)
-async def append_skill(skill_name: str, req: SkillAppendRequest, auth: dict = Depends(require_auth)) -> SkillMemory:
+async def append_skill(skill_name: str, req: SkillAppendRequest, auth: dict = _auth_dep) -> SkillMemory:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content is required")
     return store.append_skill(skill_name, req.content, req.metadata)
 
 
 @app.get("/api/v1/memory/skill/{skill_name}", response_model=SkillMemory)
-async def get_skill(skill_name: str, auth: dict = Depends(require_auth)) -> SkillMemory:
+async def get_skill(skill_name: str, auth: dict = _auth_dep) -> SkillMemory:
     skill = store.get_skill(skill_name)
     if skill is None:
         raise HTTPException(status_code=404, detail="skill memory not found")
@@ -396,7 +398,7 @@ async def get_skill(skill_name: str, auth: dict = Depends(require_auth)) -> Skil
 
 
 @app.post("/api/v1/memory/compact", response_model=CompactResponse)
-async def compact_memory(req: CompactRequest, auth: dict = Depends(require_auth)) -> CompactResponse:
+async def compact_memory(req: CompactRequest, auth: dict = _auth_dep) -> CompactResponse:
     try:
         return store.compact(req.agent_id)
     except ValueError as exc:
@@ -404,7 +406,7 @@ async def compact_memory(req: CompactRequest, auth: dict = Depends(require_auth)
 
 
 @app.post("/api/v1/memory/{agent_id}/dream")
-async def dream_compact(agent_id: str, auth: dict = Depends(require_auth)) -> dict:
+async def dream_compact(agent_id: str, auth: dict = _auth_dep) -> dict:
     """Nightly dreaming compaction: consolidate raw memories into crisp facts.
 
     Merges duplicates, extracts patterns, resolves contradictions.
@@ -478,7 +480,7 @@ async def dream_compact(agent_id: str, auth: dict = Depends(require_auth)) -> di
 
 
 @app.post("/api/v1/memory/{agent_id}/reflect")
-async def reflect(agent_id: str, auth: dict = Depends(require_auth)) -> dict:
+async def reflect(agent_id: str, auth: dict = _auth_dep) -> dict:
     """Generate higher-order insights from recent memories."""
     recent_count = 0
     if pool:

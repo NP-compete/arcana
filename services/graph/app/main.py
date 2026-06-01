@@ -28,6 +28,8 @@ from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -390,25 +392,25 @@ async def healthz() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/nodes", status_code=201)
-async def create_node(req: CreateNodeRequest, auth: dict = Depends(require_auth)) -> GraphNode:
+async def create_node(req: CreateNodeRequest, auth: dict = _auth_dep) -> GraphNode:
     return _create_node(req)
 
 
 @app.get("/api/v1/nodes")
-async def list_nodes(type: NodeType | None = Query(default=None), auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_nodes(type: NodeType | None = Query(default=None), auth: dict = _auth_dep) -> dict[str, Any]:
     nodes = _get_all_nodes(node_type=type)
     return {"nodes": nodes, "count": len(nodes)}
 
 
 @app.get("/api/v1/nodes/{node_id}")
-async def get_node(node_id: str, auth: dict = Depends(require_auth)) -> GraphNode:
+async def get_node(node_id: str, auth: dict = _auth_dep) -> GraphNode:
     if not _graph.has_node(node_id):
         raise HTTPException(status_code=404, detail=f"node '{node_id}' not found")
     return _node_to_model(node_id)
 
 
 @app.delete("/api/v1/nodes/{node_id}", status_code=204)
-async def delete_node(node_id: str, auth: dict = Depends(require_auth)) -> Response:
+async def delete_node(node_id: str, auth: dict = _auth_dep) -> Response:
     if not _graph.has_node(node_id):
         raise HTTPException(status_code=404, detail=f"node '{node_id}' not found")
     # Remove edge index entries for edges connected to this node
@@ -428,7 +430,7 @@ async def delete_node(node_id: str, auth: dict = Depends(require_auth)) -> Respo
 async def get_neighbors(
     node_id: str,
     depth: int = Query(default=1, ge=1, le=10),
-    auth: dict = Depends(require_auth),
+    auth: dict = _auth_dep,
 ) -> dict[str, Any]:
     if not _graph.has_node(node_id):
         raise HTTPException(status_code=404, detail=f"node '{node_id}' not found")
@@ -447,7 +449,7 @@ async def get_neighbors(
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/edges", status_code=201)
-async def create_edge(req: CreateEdgeRequest, auth: dict = Depends(require_auth)) -> GraphEdge:
+async def create_edge(req: CreateEdgeRequest, auth: dict = _auth_dep) -> GraphEdge:
     return _create_edge(req)
 
 
@@ -456,14 +458,14 @@ async def list_edges(
     type: EdgeType | None = Query(default=None),
     from_id: str | None = Query(default=None),
     to_id: str | None = Query(default=None),
-    auth: dict = Depends(require_auth),
+    auth: dict = _auth_dep,
 ) -> dict[str, Any]:
     edges = _get_all_edges(edge_type=type, from_id=from_id, to_id=to_id)
     return {"edges": edges, "count": len(edges)}
 
 
 @app.delete("/api/v1/edges/{edge_id}", status_code=204)
-async def delete_edge(edge_id: str, auth: dict = Depends(require_auth)) -> Response:
+async def delete_edge(edge_id: str, auth: dict = _auth_dep) -> Response:
     if edge_id not in _edge_index:
         raise HTTPException(status_code=404, detail=f"edge '{edge_id}' not found")
     from_id, to_id, key = _edge_index[edge_id]
@@ -477,7 +479,7 @@ async def delete_edge(edge_id: str, auth: dict = Depends(require_auth)) -> Respo
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/graph/path/{source_id}/{target_id}")
-async def shortest_path(source_id: str, target_id: str, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def shortest_path(source_id: str, target_id: str, auth: dict = _auth_dep) -> dict[str, Any]:
     if not _graph.has_node(source_id):
         raise HTTPException(status_code=404, detail=f"source node '{source_id}' not found")
     if not _graph.has_node(target_id):
@@ -495,7 +497,7 @@ async def shortest_path(source_id: str, target_id: str, auth: dict = Depends(req
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/query")
-async def graph_query(req: GraphQueryRequest, auth: dict = Depends(require_auth)) -> GraphQueryResult:
+async def graph_query(req: GraphQueryRequest, auth: dict = _auth_dep) -> GraphQueryResult:
     parsed = _parse_natural_language_query(req.query)
     nodes, edges = _execute_query(parsed)
     return GraphQueryResult(query=req.query, parsed=parsed, nodes=nodes, edges=edges)
@@ -506,7 +508,7 @@ async def graph_query(req: GraphQueryRequest, auth: dict = Depends(require_auth)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/graph/stats")
-async def graph_stats(auth: dict = Depends(require_auth)) -> GraphStats:
+async def graph_stats(auth: dict = _auth_dep) -> GraphStats:
     node_counts: dict[str, int] = defaultdict(int)
     edge_counts: dict[str, int] = defaultdict(int)
     for _, data in _graph.nodes(data=True):

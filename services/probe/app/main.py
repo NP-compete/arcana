@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
 
+_auth_dep = Depends(require_auth)
+
 
 def _cors_origins() -> list[str]:
     origins = os.getenv("CORS_ORIGINS", "*")
@@ -387,7 +389,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/eval/run", response_model=EvalRun, status_code=201)
-async def trigger_eval(req: RunEvalRequest, auth: dict = Depends(require_auth)) -> EvalRun:
+async def trigger_eval(req: RunEvalRequest, auth: dict = _auth_dep) -> EvalRun:
     run_id = str(uuid.uuid4())
     judges = req.judges if req.judges else _default_judges()
     run = EvalRun(
@@ -404,14 +406,14 @@ async def trigger_eval(req: RunEvalRequest, auth: dict = Depends(require_auth)) 
 
 
 @app.get("/api/v1/eval/runs")
-async def list_runs(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_runs(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         runs = list(_runs.values())
     return {"runs": runs, "total": len(runs)}
 
 
 @app.get("/api/v1/eval/runs/{run_id}", response_model=EvalRun)
-async def get_run(run_id: str, auth: dict = Depends(require_auth)) -> EvalRun:
+async def get_run(run_id: str, auth: dict = _auth_dep) -> EvalRun:
     with _store_lock:
         run = _runs.get(run_id)
     if not run:
@@ -420,7 +422,7 @@ async def get_run(run_id: str, auth: dict = Depends(require_auth)) -> EvalRun:
 
 
 @app.get("/api/v1/eval/runs/{run_id}/report")
-async def get_report(run_id: str, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def get_report(run_id: str, auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         run = _runs.get(run_id)
     if not run:
@@ -446,7 +448,7 @@ async def get_report(run_id: str, auth: dict = Depends(require_auth)) -> dict[st
 
 
 @app.post("/api/v1/eval/compare")
-async def compare_runs(req: CompareRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def compare_runs(req: CompareRequest, auth: dict = _auth_dep) -> dict[str, Any]:
     comparisons = []
     baseline_score = None
     if req.baseline_run_id:

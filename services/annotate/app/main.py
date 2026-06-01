@@ -27,6 +27,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
 
 from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
 from _shared.embeddings import embed_text, cosine_similarity
 
 
@@ -215,7 +217,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/annotations", response_model=Annotation, status_code=201)
-async def submit_annotation(req: SubmitAnnotationRequest, auth: dict = Depends(require_auth)) -> Annotation:
+async def submit_annotation(req: SubmitAnnotationRequest, auth: dict = _auth_dep) -> Annotation:
     ann_id = str(uuid.uuid4())
     embedding = embed_text(req.question + " " + req.corrected_answer)
     ann = Annotation(
@@ -242,7 +244,7 @@ async def submit_annotation(req: SubmitAnnotationRequest, auth: dict = Depends(r
 
 
 @app.get("/api/v1/annotations")
-async def list_annotations(agent: str | None = None, topic: str | None = None, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def list_annotations(agent: str | None = None, topic: str | None = None, auth: dict = _auth_dep) -> dict[str, Any]:
     # Use in-memory cache (kept in sync with DB)
     with _store_lock:
         items = list(_annotations.values())
@@ -254,7 +256,7 @@ async def list_annotations(agent: str | None = None, topic: str | None = None, a
 
 
 @app.post("/api/v1/annotations/search")
-async def search_annotations(req: SearchRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def search_annotations(req: SearchRequest, auth: dict = _auth_dep) -> dict[str, Any]:
     query_emb = embed_text(req.query)
     matches = []
     with _store_lock:
@@ -269,7 +271,7 @@ async def search_annotations(req: SearchRequest, auth: dict = Depends(require_au
 
 
 @app.get("/api/v1/annotations/stats")
-async def annotation_stats(auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def annotation_stats(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         total = len(_annotations)
         crystallized_count = sum(1 for a in _annotations.values() if getattr(a, "crystallized", False))
@@ -309,7 +311,7 @@ async def annotation_stats(auth: dict = Depends(require_auth)) -> dict[str, Any]
 
 
 @app.post("/api/v1/annotations/crystallize")
-async def crystallize(req: CrystallizeRequest, auth: dict = Depends(require_auth)) -> dict[str, Any]:
+async def crystallize(req: CrystallizeRequest, auth: dict = _auth_dep) -> dict[str, Any]:
     crystallized_ids: list[str] = []
     with _store_lock:
         grouped: dict[tuple[str, str], list[Annotation]] = defaultdict(list)
