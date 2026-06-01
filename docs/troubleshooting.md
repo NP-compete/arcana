@@ -1,4 +1,6 @@
-# Troubleshooting Guide
+# Troubleshooting
+
+Quick fixes for common issues. If something isn't covered here, [open an issue](https://github.com/NP-compete/arcana/issues).
 
 ## Service Won't Start
 

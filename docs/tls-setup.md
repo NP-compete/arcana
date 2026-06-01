@@ -1,7 +1,6 @@
-# mTLS Setup for Arcana Services
+# mTLS Setup
 
-This document describes how to enable mutual TLS (mTLS) between Arcana services
-using cert-manager and the internal CA infrastructure.
+All Arcana services communicate over mutual TLS in production. cert-manager handles certificate issuance and renewal automatically — you enable it with one Helm flag.
 
 ## Prerequisites
 
