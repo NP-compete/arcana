@@ -11,25 +11,26 @@ import { useAuth } from "../auth/AuthContext";
 export const DashboardPage = () => {
   const navigate = useNavigate();
   const { health, error, loading } = useHealth(5000);
-  const { user, isAtLeast } = useAuth();
+  const { user, isAtLeast, authHeaders } = useAuth();
   const [agentCount, setAgentCount] = useState<{ total: number } | null>(null);
   const [skillCount, setSkillCount] = useState(0);
   const [mcpCount, setMcpCount] = useState(0);
 
   useEffect(() => {
-    fetch("/api/v1/agents")
+    const headers = authHeaders();
+    fetch("/api/v1/agents", { headers })
       .then((r) => r.json())
       .then((d) => setAgentCount({ total: d.total ?? 0 }))
       .catch(() => {});
-    fetch("/api/v1/skills")
+    fetch("/api/v1/skills", { headers })
       .then((r) => r.json())
       .then((d) => setSkillCount(d.skills?.length ?? 0))
       .catch(() => {});
-    fetch("/api/v1/mcp")
+    fetch("/api/v1/tools", { headers })
       .then((r) => r.json())
       .then((d) => setMcpCount(d.servers?.length ?? 0))
       .catch(() => {});
-  }, []);
+  }, [authHeaders]);
 
   const totalServices = health?.services.length ?? 0;
   const healthyServices = health?.services.filter((s) => s.status === "healthy").length ?? 0;

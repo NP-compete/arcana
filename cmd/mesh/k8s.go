@@ -184,6 +184,11 @@ func (k *K8sClient) CreateNetworkPolicy(namespace, name string) error {
 						{"protocol": "UDP", "port": 53},
 					},
 				},
+				{
+					"ports": []map[string]interface{}{
+						{"protocol": "TCP", "port": 443},
+					},
+				},
 			},
 		},
 	}
