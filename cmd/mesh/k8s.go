@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,10 +32,17 @@ func NewK8sClient() (*K8sClient, error) {
 		return nil, fmt.Errorf("cannot read SA token: %w", err)
 	}
 
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{}
 	caCert, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 	if err == nil {
-		_ = caCert
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(caCert) {
+			tlsConfig.RootCAs = pool
+		}
+	} else if os.Getenv("K8S_INSECURE_SKIP_VERIFY") == "true" {
+		tlsConfig.InsecureSkipVerify = true
+	} else {
+		return nil, fmt.Errorf("cannot read CA cert and K8S_INSECURE_SKIP_VERIFY not set: %w", err)
 	}
 
 	return &K8sClient{
@@ -394,7 +402,9 @@ func (k *K8sClient) GetDeploymentStatus(namespace, name string) (map[string]inte
 		return nil, nil
 	}
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
 	return result, nil
 }
 
@@ -407,7 +417,9 @@ func (k *K8sClient) GetNamespace(name string) (map[string]interface{}, error) {
 		return nil, nil
 	}
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
 	return result, nil
 }
 
@@ -420,7 +432,9 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 			continue
 		}
 		var list map[string]interface{}
-		json.Unmarshal(body, &list)
+		if err := json.Unmarshal(body, &list); err != nil {
+			continue
+		}
 		if items, ok := list["items"].([]interface{}); ok {
 			counts[resource] = len(items)
 		}
@@ -430,9 +444,10 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 		fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", namespace), nil)
 	if err == nil && code == 200 {
 		var list map[string]interface{}
-		json.Unmarshal(body, &list)
-		if items, ok := list["items"].([]interface{}); ok {
-			counts["networkpolicies"] = len(items)
+		if err := json.Unmarshal(body, &list); err == nil {
+			if items, ok := list["items"].([]interface{}); ok {
+				counts["networkpolicies"] = len(items)
+			}
 		}
 	}
 
@@ -440,9 +455,10 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 		fmt.Sprintf("/apis/arcana.io/v1alpha1/namespaces/%s/arcanaagents", namespace), nil)
 	if err == nil && code == 200 {
 		var list map[string]interface{}
-		json.Unmarshal(body, &list)
-		if items, ok := list["items"].([]interface{}); ok {
-			counts["arcanaagents"] = len(items)
+		if err := json.Unmarshal(body, &list); err == nil {
+			if items, ok := list["items"].([]interface{}); ok {
+				counts["arcanaagents"] = len(items)
+			}
 		}
 	}
 

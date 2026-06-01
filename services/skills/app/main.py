@@ -1,13 +1,17 @@
 import json
-import logging
 import os
+import sys
+import logging
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import asyncpg
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -26,6 +30,18 @@ structlog.configure(
 )
 log = structlog.get_logger(service="skills")
 
+from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
+
+
 app = FastAPI(
     title="Arcana Skills",
     version="0.1.0",
@@ -33,7 +49,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -89,17 +105,67 @@ pool: asyncpg.Pool | None = None
 @app.on_event("startup")
 async def startup_db():
     global pool
+    password = os.getenv("POSTGRES_PASSWORD", "" if os.getenv("ARCANA_ENV") == "production" else "arcana-dev")
+    if not password:
+        raise RuntimeError("POSTGRES_PASSWORD required in production")
     try:
         pool = await asyncpg.create_pool(
             host=os.getenv("POSTGRES_HOST", "postgres"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
             user=os.getenv("POSTGRES_USER", "arcana"),
-            password=os.getenv("POSTGRES_PASSWORD", "arcana-dev"),
+            password=password,
             database=os.getenv("POSTGRES_DB", "arcana"),
             min_size=2,
             max_size=10,
         )
         log.info("database_connected", host=os.getenv("POSTGRES_HOST", "postgres"))
+
+        # Ensure the skills table exists
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS skills (
+                    name TEXT PRIMARY KEY,
+                    type TEXT NOT NULL DEFAULT 'reactive',
+                    version TEXT NOT NULL DEFAULT '1.0.0',
+                    description TEXT,
+                    skill_md TEXT,
+                    quality_badge TEXT DEFAULT 'none',
+                    source TEXT DEFAULT 'manual',
+                    category TEXT DEFAULT 'general',
+                    usage_count INTEGER DEFAULT 0,
+                    rating REAL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    metadata JSONB DEFAULT '{}',
+                    memory JSONB DEFAULT '[]',
+                    last_used_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+
+        # Hydrate the in-memory cache from the database
+        rows = await pool.fetch(
+            "SELECT name, type, version, description, skill_md, quality_badge,"
+            " source, category, usage_count, rating, status, metadata, memory,"
+            " created_at, updated_at FROM skills WHERE status = 'active'"
+        )
+        for r in rows:
+            skills_db[r["name"]] = {
+                "name": r["name"],
+                "type": r["type"],
+                "version": r["version"],
+                "description": r["description"],
+                "skill_md": r["skill_md"],
+                "quality_badge": r["quality_badge"],
+                "source": r["source"],
+                "category": r["category"],
+                "usage_count": r["usage_count"],
+                "rating": r["rating"],
+                "status": r["status"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+        log.info("skills_cache_loaded", count=len(skills_db))
     except Exception as e:
         log.warn("database_unavailable_using_memory", error=str(e))
 
@@ -123,7 +189,7 @@ skills_db: dict[str, dict] = {}
 
 
 @app.get("/api/v1/skills")
-async def list_skills():
+async def list_skills(auth: dict = _auth_dep):
     """Return all registered skills."""
     if pool:
         rows = await pool.fetch(
@@ -137,7 +203,7 @@ async def list_skills():
 
 
 @app.get("/api/v1/skills/{name}")
-async def get_skill(name: str):
+async def get_skill(name: str, auth: dict = _auth_dep):
     """Return a single skill by name."""
     if pool:
         row = await pool.fetchrow("SELECT * FROM skills WHERE name = $1", name)
@@ -156,7 +222,7 @@ async def get_skill(name: str):
 
 
 @app.post("/api/v1/skills/create-reactive")
-async def create_reactive_skill(request: Request):
+async def create_reactive_skill(request: Request, auth: dict = _auth_dep):
     """Agent calls this when it needs a skill that does not exist.
 
     Generates SKILL.md from the description, runs basic tests, registers
@@ -212,8 +278,8 @@ async def create_reactive_skill(request: Request):
             name, "functional", "1.0.0", description, skill_md,
             "untested", "reactive", now,
         )
-    else:
-        skills_db[name] = skill
+    # Always update in-memory cache
+    skills_db[name] = skill
     log.info("skill_created", name=name, source="reactive")
     return skill
 
@@ -224,7 +290,7 @@ async def create_reactive_skill(request: Request):
 
 
 @app.post("/api/v1/skills/crystallize")
-async def crystallize_skills(request: Request):
+async def crystallize_skills(request: Request, auth: dict = _auth_dep):
     """Nightly job: analyse annotation cache for repeated corrections,
     crystallise into skills."""
     body = await request.json()
@@ -256,8 +322,8 @@ async def crystallize_skills(request: Request):
                     skill_name, "atomic", "1.0.0", description,
                     "untested", "crystallization", now,
                 )
-            else:
-                skills_db[skill_name] = skill
+            # Always update in-memory cache
+            skills_db[skill_name] = skill
             created.append(skill_name)
     log.info("skills_crystallized", count=len(created))
     return {"crystallized": created, "count": len(created)}
@@ -269,7 +335,7 @@ async def crystallize_skills(request: Request):
 
 
 @app.post("/api/v1/skills/merge")
-async def merge_skills(request: Request):
+async def merge_skills(request: Request, auth: dict = _auth_dep):
     """Merge two similar skills into one."""
     body = await request.json()
     skill_a = body.get("skill_a", "")
@@ -319,8 +385,8 @@ async def merge_skills(request: Request):
             "untested", "merge",
             json.dumps({"merged_from": [skill_a, skill_b]}), now,
         )
-    else:
-        skills_db[merged_name] = merged
+    # Always update in-memory cache
+    skills_db[merged_name] = merged
     log.info("skills_merged", merged_name=merged_name, sources=[skill_a, skill_b])
     return merged
 
@@ -331,7 +397,7 @@ async def merge_skills(request: Request):
 
 
 @app.post("/api/v1/skills/prune")
-async def prune_skills(request: Request):
+async def prune_skills(request: Request, auth: dict = _auth_dep):
     """Archive skills unused for 90+ days or with >50% failure rate."""
     body = await request.json()
     unused_days = body.get("unused_days", 90)
@@ -351,6 +417,9 @@ async def prune_skills(request: Request):
             if last_used and datetime.fromisoformat(last_used) < cutoff:
                 skill["status"] = "archived"
                 pruned.append(name)
+    # Sync cache: remove pruned skills
+    for name in pruned:
+        skills_db.pop(name, None)
     log.info("skills_pruned", count=len(pruned))
     return {"pruned": pruned, "count": len(pruned)}
 
@@ -361,7 +430,7 @@ async def prune_skills(request: Request):
 
 
 @app.post("/api/v1/skills/{name}/transfer")
-async def transfer_skill(name: str, request: Request):
+async def transfer_skill(name: str, request: Request, auth: dict = _auth_dep):
     """Transfer a skill to another agent with validation."""
     if pool:
         skill = await pool.fetchrow("SELECT * FROM skills WHERE name = $1", name)
@@ -394,7 +463,7 @@ async def transfer_skill(name: str, request: Request):
 
 
 @app.post("/api/v1/skills/{name}/memory")
-async def append_skill_memory(name: str, request: Request):
+async def append_skill_memory(name: str, request: Request, auth: dict = _auth_dep):
     """Append usage note to skill's experiential memory."""
     body = await request.json()
     entry = body.get("entry", "")
@@ -428,7 +497,7 @@ async def append_skill_memory(name: str, request: Request):
 
 
 @app.get("/api/v1/skills/{name}/memory")
-async def get_skill_memory(name: str):
+async def get_skill_memory(name: str, auth: dict = _auth_dep):
     """Get skill's experiential memory."""
     if pool:
         row = await pool.fetchrow("SELECT memory FROM skills WHERE name = $1", name)
@@ -452,6 +521,7 @@ async def list_marketplace(
     category: str = "all",
     type: str = "all",
     q: str = "",
+    auth: dict = _auth_dep,
 ):
     """Browse marketplace items."""
     if pool:

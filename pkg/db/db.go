@@ -94,9 +94,20 @@ func buildDSN() string {
 	host := resolveHost()
 	port := resolvePort()
 	user := envOr("POSTGRES_USER", "arcana")
-	pass := envOr("POSTGRES_PASSWORD", "arcana-dev")
 	dbname := envOr("POSTGRES_DB", "arcana")
-	sslmode := envOr("POSTGRES_SSLMODE", "prefer")
+
+	var pass, sslmode string
+	if os.Getenv("ARCANA_ENV") == "production" {
+		pass = os.Getenv("POSTGRES_PASSWORD")
+		if pass == "" {
+			log.Error("POSTGRES_PASSWORD required in production")
+			os.Exit(1)
+		}
+		sslmode = envOr("POSTGRES_SSLMODE", "require")
+	} else {
+		pass = envOr("POSTGRES_PASSWORD", "arcana-dev")
+		sslmode = envOr("POSTGRES_SSLMODE", "prefer")
+	}
 
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		host, port, user, pass, dbname, sslmode)

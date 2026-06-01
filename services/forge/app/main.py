@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import sys
 import logging
 import threading
 import time
 import uuid
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -19,6 +26,17 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
+
+from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
 
 
 structlog.configure(
@@ -34,7 +52,7 @@ log = structlog.get_logger(service="forge")
 app = FastAPI(title="Arcana Forge", version="0.1.0", description="Fine-tuning pipeline")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -125,6 +143,149 @@ class RegisterDatasetRequest(BaseModel):
     schema: dict[str, Any] = Field(default_factory=dict)
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+# ---------------------------------------------------------------------------
+# Training backends
+# ---------------------------------------------------------------------------
+
+class TrainingBackend(ABC):
+    @abstractmethod
+    async def run(self, experiment: dict, dataset: dict, config: dict) -> None: ...
+
+
+class SimulatedBackend(TrainingBackend):
+    """Development mode: simulates training progress."""
+
+    async def run(self, experiment: dict, dataset: dict, config: dict) -> None:
+        epochs = config.get("epochs", 3)
+        for epoch in range(epochs):
+            for step in range(10):
+                await asyncio.sleep(0.05)
+                loss = max(0.1, 2.5 - (epoch * 0.5 + step * 0.05))
+                experiment["metrics"].append({
+                    "epoch": epoch + 1,
+                    "step": step + 1,
+                    "loss": round(loss, 4),
+                    "learning_rate": config.get("learning_rate", 5e-5),
+                    "timestamp": _utcnow().isoformat(),
+                })
+                if experiment["status"] == "cancelled":
+                    return
+        experiment["status"] = "completed"
+        experiment["artifacts"] = {
+            "checkpoint": f"s3://forge-artifacts/{experiment['id']}/checkpoint-final",
+            "config": config,
+        }
+
+
+class K8sJobBackend(TrainingBackend):
+    """Production mode: launches training as a Kubernetes Job."""
+
+    async def run(self, experiment: dict, dataset: dict, config: dict) -> None:
+        k8s_host = os.getenv("KUBERNETES_SERVICE_HOST")
+        k8s_port = os.getenv("KUBERNETES_SERVICE_PORT")
+
+        if not k8s_host:
+            log.warn("k8s_not_available_falling_back_to_simulated")
+            await SimulatedBackend().run(experiment, dataset, config)
+            return
+
+        token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        try:
+            with open(token_path) as f:
+                token = f.read().strip()
+        except FileNotFoundError:
+            log.warn("k8s_token_not_found_falling_back_to_simulated")
+            await SimulatedBackend().run(experiment, dataset, config)
+            return
+
+        import httpx
+
+        namespace = os.getenv("TRAINING_NAMESPACE", "arcana")
+        job_name = f"forge-{experiment['id'][:8]}"
+        image = os.getenv("TRAINING_IMAGE", "ghcr.io/np-compete/arcana-training:latest")
+
+        job_spec = {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {"name": job_name, "namespace": namespace},
+            "spec": {
+                "backoffLimit": 1,
+                "template": {
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "containers": [{
+                            "name": "trainer",
+                            "image": image,
+                            "env": [
+                                {"name": "EXPERIMENT_ID", "value": experiment["id"]},
+                                {"name": "BASE_MODEL", "value": experiment.get("base_model", "")},
+                                {"name": "DATASET_ID", "value": experiment.get("dataset_id", "")},
+                                {"name": "CONFIG", "value": json.dumps(config)},
+                            ],
+                            "resources": {
+                                "requests": {"memory": "4Gi", "cpu": "2"},
+                                "limits": {"memory": "8Gi", "cpu": "4"},
+                            },
+                        }],
+                    },
+                },
+            },
+        }
+
+        async with httpx.AsyncClient(
+            base_url=f"https://{k8s_host}:{k8s_port}",
+            verify=False,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30.0,
+        ) as http_client:
+            resp = await http_client.post(
+                f"/apis/batch/v1/namespaces/{namespace}/jobs",
+                json=job_spec,
+            )
+            if resp.status_code not in (200, 201, 409):
+                experiment["status"] = "failed"
+                experiment["metrics"].append({"error": f"Failed to create K8s Job: HTTP {resp.status_code}"})
+                return
+
+            for _ in range(360):  # Max 30 minutes
+                await asyncio.sleep(5)
+                if experiment["status"] == "cancelled":
+                    await http_client.delete(f"/apis/batch/v1/namespaces/{namespace}/jobs/{job_name}")
+                    return
+
+                resp = await http_client.get(f"/apis/batch/v1/namespaces/{namespace}/jobs/{job_name}")
+                if resp.status_code != 200:
+                    continue
+
+                job_status = resp.json().get("status", {})
+                if job_status.get("succeeded", 0) > 0:
+                    experiment["status"] = "completed"
+                    experiment["artifacts"] = {
+                        "checkpoint": f"s3://forge-artifacts/{experiment['id']}/checkpoint-final",
+                    }
+                    return
+                if job_status.get("failed", 0) > 0:
+                    experiment["status"] = "failed"
+                    return
+
+            experiment["status"] = "timeout"
+
+
+def _get_training_backend() -> TrainingBackend:
+    mode = os.getenv("TRAINING_BACKEND", "simulated")
+    if mode == "k8s":
+        return K8sJobBackend()
+    return SimulatedBackend()
+
+
+# ---------------------------------------------------------------------------
+# In-memory stores
+# ---------------------------------------------------------------------------
+
 _store_lock = threading.Lock()
 _experiments: dict[str, Experiment] = {}
 _datasets: dict[str, Dataset] = {}
@@ -132,32 +293,58 @@ _cancel_flags: dict[str, bool] = {}
 
 
 def _run_experiment(exp_id: str) -> None:
-    steps = 20
-    for i in range(1, steps + 1):
-        time.sleep(0.05)
-        with _store_lock:
-            if _cancel_flags.get(exp_id):
-                exp = _experiments.get(exp_id)
-                if exp:
-                    exp.status = ExperimentStatus.CANCELLED
-                return
-            exp = _experiments.get(exp_id)
-            if not exp:
-                return
-            exp.status = ExperimentStatus.RUNNING
-            exp.progress_pct = (i / steps) * 100
-            exp.metrics = {
-                "loss": max(0.1, 2.5 - (i * 0.1)),
-                "learning_rate": exp.config.get("learning_rate", 2e-5),
-                "epoch": i / (steps / 3),
-            }
+    exp = _experiments.get(exp_id)
+    if not exp:
+        return
+    exp.status = ExperimentStatus.RUNNING
+
+    exp_dict: dict = {
+        "id": exp.id,
+        "status": "running",
+        "metrics": [],
+        "base_model": exp.base_model,
+        "dataset_id": exp.dataset or "",
+    }
+    dataset_dict: dict = {}
+    if exp.dataset and exp.dataset in _datasets:
+        ds = _datasets[exp.dataset]
+        dataset_dict = {"id": ds.id, "name": ds.name, "path": ds.path}
+
+    config = dict(exp.config)
+    backend = _get_training_backend()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(backend.run(exp_dict, dataset_dict, config))
+    finally:
+        loop.close()
+
     with _store_lock:
         exp = _experiments.get(exp_id)
-        if exp and exp.status != ExperimentStatus.CANCELLED:
+        if not exp:
+            return
+        if _cancel_flags.get(exp_id):
+            exp.status = ExperimentStatus.CANCELLED
+            return
+        if exp_dict["status"] == "completed":
             exp.status = ExperimentStatus.COMPLETED
             exp.progress_pct = 100.0
-            exp.metrics["final_loss"] = exp.metrics.get("loss", 0.1)
-            exp.artifacts = [f"s3://forge-artifacts/{exp_id}/checkpoint-final"]
+            metrics_list = exp_dict.get("metrics", [])
+            if metrics_list:
+                last = metrics_list[-1]
+                exp.metrics = {
+                    "loss": last.get("loss", 0.0),
+                    "learning_rate": last.get("learning_rate", 0.0),
+                    "final_loss": last.get("loss", 0.0),
+                }
+            artifacts = exp_dict.get("artifacts", {})
+            if isinstance(artifacts, dict) and "checkpoint" in artifacts:
+                exp.artifacts = [artifacts["checkpoint"]]
+        elif exp_dict["status"] in ("failed", "timeout"):
+            exp.status = ExperimentStatus.FAILED
+        else:
+            exp.status = ExperimentStatus.COMPLETED
+            exp.progress_pct = 100.0
 
 
 @app.get("/readyz")
@@ -170,7 +357,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/experiments", response_model=Experiment, status_code=201)
-async def create_experiment(req: CreateExperimentRequest) -> Experiment:
+async def create_experiment(req: CreateExperimentRequest, auth: dict = _auth_dep) -> Experiment:
     with _store_lock:
         if req.dataset not in _datasets:
             raise HTTPException(status_code=404, detail="dataset not found")
@@ -192,14 +379,14 @@ async def create_experiment(req: CreateExperimentRequest) -> Experiment:
 
 
 @app.get("/api/v1/experiments")
-async def list_experiments() -> dict[str, Any]:
+async def list_experiments(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         exps = list(_experiments.values())
     return {"experiments": exps, "total": len(exps)}
 
 
 @app.get("/api/v1/experiments/{exp_id}", response_model=Experiment)
-async def get_experiment(exp_id: str) -> Experiment:
+async def get_experiment(exp_id: str, auth: dict = _auth_dep) -> Experiment:
     with _store_lock:
         exp = _experiments.get(exp_id)
     if not exp:
@@ -208,7 +395,7 @@ async def get_experiment(exp_id: str) -> Experiment:
 
 
 @app.post("/api/v1/experiments/{exp_id}/cancel", response_model=Experiment)
-async def cancel_experiment(exp_id: str) -> Experiment:
+async def cancel_experiment(exp_id: str, auth: dict = _auth_dep) -> Experiment:
     with _store_lock:
         exp = _experiments.get(exp_id)
         if not exp:
@@ -221,14 +408,14 @@ async def cancel_experiment(exp_id: str) -> Experiment:
 
 
 @app.get("/api/v1/datasets")
-async def list_datasets() -> dict[str, Any]:
+async def list_datasets(auth: dict = _auth_dep) -> dict[str, Any]:
     with _store_lock:
         ds = list(_datasets.values())
     return {"datasets": ds, "total": len(ds)}
 
 
 @app.post("/api/v1/datasets", response_model=Dataset, status_code=201)
-async def register_dataset(req: RegisterDatasetRequest) -> Dataset:
+async def register_dataset(req: RegisterDatasetRequest, auth: dict = _auth_dep) -> Dataset:
     with _store_lock:
         ds_id = str(uuid.uuid4())
         ds = Dataset(

@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import math
 import os
+import sys
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import asyncpg
 import structlog
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -23,6 +25,18 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field
+
+from _shared.auth import require_auth
+
+_auth_dep = Depends(require_auth)
+from _shared.embeddings import cosine_similarity, embed_text, embedding_dim  # noqa: F401
+
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv("CORS_ORIGINS", "*")
+    if os.getenv("ARCANA_ENV") == "production" and origins == "*":
+        raise RuntimeError("CORS_ORIGINS must be set in production")
+    return [o.strip() for o in origins.split(",")]
 
 
 def utcnow() -> datetime:
@@ -101,27 +115,6 @@ class SearchResponse(BaseModel):
     results: list[SearchResult]
 
 
-EMBEDDING_DIM = 64
-
-
-def text_to_embedding(text: str) -> list[float]:
-    digest = hashlib.sha256(text.encode("utf-8")).digest()
-    values = [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(EMBEDDING_DIM)]
-    norm = math.sqrt(sum(v * v for v in values)) or 1.0
-    return [v / norm for v in values]
-
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    if len(a) != len(b):
-        min_len = min(len(a), len(b))
-        a = a[:min_len]
-        b = b[:min_len]
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    norm_a = math.sqrt(sum(x * x for x in a)) or 1.0
-    norm_b = math.sqrt(sum(x * x for x in b)) or 1.0
-    return dot / (norm_a * norm_b)
-
-
 class MemoryStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -162,7 +155,7 @@ class MemoryStore:
         metadata: dict[str, Any],
         embedding: list[float] | None,
     ) -> LongTermMemory:
-        vec = embedding if embedding else text_to_embedding(content)
+        vec = embedding if embedding else embed_text(content)
         memory = LongTermMemory(
             id=str(uuid.uuid4()),
             agent_id=agent_id,
@@ -176,7 +169,7 @@ class MemoryStore:
         return memory
 
     def search_long_term(self, agent_id: str, query: str, top_k: int) -> list[SearchResult]:
-        query_vec = text_to_embedding(query)
+        query_vec = embed_text(query)
         with self._lock:
             memories = list(self._long_term.get(agent_id, []))
 
@@ -227,7 +220,7 @@ class MemoryStore:
                 agent_id=agent_id,
                 content=summary_content,
                 metadata=metadata,
-                embedding=text_to_embedding(summary_content),
+                embedding=embed_text(summary_content),
                 created_at=utcnow(),
             )
             self._long_term.setdefault(agent_id, []).append(memory)
@@ -252,7 +245,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -285,12 +278,15 @@ pool: asyncpg.Pool | None = None
 @app.on_event("startup")
 async def startup_db():
     global pool
+    password = os.getenv("POSTGRES_PASSWORD", "" if os.getenv("ARCANA_ENV") == "production" else "arcana-dev")
+    if not password:
+        raise RuntimeError("POSTGRES_PASSWORD required in production")
     try:
         pool = await asyncpg.create_pool(
             host=os.getenv("POSTGRES_HOST", "postgres"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
             user=os.getenv("POSTGRES_USER", "arcana"),
-            password=os.getenv("POSTGRES_PASSWORD", "arcana-dev"),
+            password=password,
             database=os.getenv("POSTGRES_DB", "arcana"),
             min_size=2,
             max_size=10,
@@ -339,7 +335,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/api/v1/memory/short-term", response_model=ShortTermEntry, status_code=201)
-async def store_short_term(req: ShortTermStoreRequest) -> ShortTermEntry:
+async def store_short_term(req: ShortTermStoreRequest, auth: dict = _auth_dep) -> ShortTermEntry:
     if req.ttl <= 0:
         raise HTTPException(status_code=400, detail="ttl must be positive")
     entry = store.store_short_term(req.agent_id, req.key, req.value, req.ttl)
@@ -354,12 +350,12 @@ async def store_short_term(req: ShortTermStoreRequest) -> ShortTermEntry:
 
 
 @app.get("/api/v1/memory/short-term/{agent_id}", response_model=list[ShortTermEntry])
-async def get_short_term(agent_id: str) -> list[ShortTermEntry]:
+async def get_short_term(agent_id: str, auth: dict = _auth_dep) -> list[ShortTermEntry]:
     return store.get_short_term(agent_id)
 
 
 @app.post("/api/v1/memory/long-term", response_model=LongTermMemory, status_code=201)
-async def store_long_term(req: LongTermStoreRequest) -> LongTermMemory:
+async def store_long_term(req: LongTermStoreRequest, auth: dict = _auth_dep) -> LongTermMemory:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content is required")
     memory = store.store_long_term(req.agent_id, req.content, req.metadata, req.embedding)
@@ -378,6 +374,7 @@ async def search_long_term(
     agent_id: str,
     query: str = Query(..., min_length=1),
     top_k: int = Query(default=5, ge=1, le=50),
+    auth: dict = _auth_dep,
 ) -> SearchResponse:
     # Always use in-memory search for vector similarity; DB is used as
     # persistence backing but the embedding search stays in-process.
@@ -386,14 +383,14 @@ async def search_long_term(
 
 
 @app.post("/api/v1/memory/skill/{skill_name}", response_model=SkillMemory)
-async def append_skill(skill_name: str, req: SkillAppendRequest) -> SkillMemory:
+async def append_skill(skill_name: str, req: SkillAppendRequest, auth: dict = _auth_dep) -> SkillMemory:
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content is required")
     return store.append_skill(skill_name, req.content, req.metadata)
 
 
 @app.get("/api/v1/memory/skill/{skill_name}", response_model=SkillMemory)
-async def get_skill(skill_name: str) -> SkillMemory:
+async def get_skill(skill_name: str, auth: dict = _auth_dep) -> SkillMemory:
     skill = store.get_skill(skill_name)
     if skill is None:
         raise HTTPException(status_code=404, detail="skill memory not found")
@@ -401,7 +398,7 @@ async def get_skill(skill_name: str) -> SkillMemory:
 
 
 @app.post("/api/v1/memory/compact", response_model=CompactResponse)
-async def compact_memory(req: CompactRequest) -> CompactResponse:
+async def compact_memory(req: CompactRequest, auth: dict = _auth_dep) -> CompactResponse:
     try:
         return store.compact(req.agent_id)
     except ValueError as exc:
@@ -409,7 +406,7 @@ async def compact_memory(req: CompactRequest) -> CompactResponse:
 
 
 @app.post("/api/v1/memory/{agent_id}/dream")
-async def dream_compact(agent_id: str) -> dict:
+async def dream_compact(agent_id: str, auth: dict = _auth_dep) -> dict:
     """Nightly dreaming compaction: consolidate raw memories into crisp facts.
 
     Merges duplicates, extracts patterns, resolves contradictions.
@@ -424,23 +421,26 @@ async def dream_compact(agent_id: str) -> dict:
             "reason": "insufficient memories for compaction",
         }
 
-    # Deduplicate by content prefix (simple keyword clustering).
-    # In production this would call the model service for LLM-based compaction.
+    # Deduplicate using embedding similarity instead of prefix matching
+    seen: list[tuple[str, list[float]]] = []
     facts: list[dict] = []
-    seen_topics: set[str] = set()
+
     for mem in long_term:
-        topic = mem.content[:50]
-        if topic not in seen_topics:
-            seen_topics.add(topic)
-            facts.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "content": mem.content,
-                    "source_count": 1,
-                    "compacted_at": utcnow().isoformat(),
-                    "type": "fact",
-                }
-            )
+        vec = embed_text(mem.content)
+        is_duplicate = False
+        for _, seen_vec in seen:
+            if cosine_similarity(vec, seen_vec) > 0.9:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            seen.append((mem.content, vec))
+            facts.append({
+                "id": str(uuid.uuid4()),
+                "content": mem.content,
+                "source_count": 1,
+                "compacted_at": utcnow().isoformat(),
+                "type": "fact",
+            })
 
     archived_count = len(long_term)
 
@@ -454,7 +454,7 @@ async def dream_compact(agent_id: str) -> dict:
                     agent_id=agent_id,
                     content=fact["content"],
                     metadata={"type": "compacted_fact", "compacted_at": fact["compacted_at"]},
-                    embedding=text_to_embedding(fact["content"]),
+                    embedding=embed_text(fact["content"]),
                     created_at=utcnow(),
                 )
             )
@@ -480,7 +480,7 @@ async def dream_compact(agent_id: str) -> dict:
 
 
 @app.post("/api/v1/memory/{agent_id}/reflect")
-async def reflect(agent_id: str) -> dict:
+async def reflect(agent_id: str, auth: dict = _auth_dep) -> dict:
     """Generate higher-order insights from recent memories."""
     recent_count = 0
     if pool:
@@ -499,14 +499,29 @@ async def reflect(agent_id: str) -> dict:
 
     insights: list[dict] = []
     if recent_count >= 5:
-        insights.append(
-            {
-                "id": str(uuid.uuid4()),
-                "content": f"Pattern detected: {recent_count} recent memories share common themes",
-                "type": "insight",
-                "source_memories": recent_count,
-                "created_at": utcnow().isoformat(),
-            }
-        )
+        # Cluster recent memories by semantic similarity
+        contents = [r["content"] if pool else r.content for r in (rows if pool else recent)]
+        clusters: list[list[str]] = []
+        for content in contents[:20]:
+            vec = embed_text(content)
+            placed = False
+            for cluster in clusters:
+                cluster_vec = embed_text(cluster[0])
+                if cosine_similarity(vec, cluster_vec) > 0.7:
+                    cluster.append(content)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([content])
+
+        for i, cluster in enumerate(clusters):
+            if len(cluster) >= 2:
+                insights.append({
+                    "id": str(uuid.uuid4()),
+                    "content": f"Recurring theme ({len(cluster)} memories): {cluster[0][:100]}",
+                    "type": "insight",
+                    "source_memories": len(cluster),
+                    "created_at": utcnow().isoformat(),
+                })
 
     return {"insights": insights}
