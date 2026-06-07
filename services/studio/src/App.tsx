@@ -44,6 +44,7 @@ import {
   PlusCircleIcon,
   CheckCircleIcon,
   EditIcon,
+  FlaskIcon,
 } from "@patternfly/react-icons";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
@@ -68,6 +69,7 @@ import { GuardrailBuilderPage } from "./pages/GuardrailBuilderPage";
 import { ApprovalsPage } from "./pages/ApprovalsPage";
 import { BuildHubPage } from "./pages/BuildHubPage";
 import { YamlEditorPage } from "./pages/YamlEditorPage";
+import { PlaygroundPage } from "./pages/PlaygroundPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { ThemeToggle } from "./components/ThemeToggle";
 
@@ -82,6 +84,7 @@ const NAV_ITEMS: NavEntry[] = [
   { path: "/", label: "Dashboard", icon: <HomeIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "auditor", "admin"] },
   { path: "/chat", label: "Chat", icon: <CommentsIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "auditor", "admin"] },
   { path: "/build", label: "Build Hub", icon: <PlusCircleIcon />, allowedRoles: ["developer", "admin"] },
+  { path: "/playground", label: "Playground", icon: <FlaskIcon />, allowedRoles: ["developer", "admin"] },
   { path: "/org-chart", label: "Org Chart", icon: <UsersIcon />, allowedRoles: ["admin", "sre"] },
   { path: "/agents", label: "Agents", icon: <RobotIcon />, allowedRoles: ["user", "developer", "data-engineer", "sre", "admin"] },
   { path: "/connectors", label: "Connectors", icon: <PluggedIcon />, allowedRoles: ["developer", "data-engineer", "admin"] },
@@ -239,6 +242,7 @@ const ShellLayout = () => {
           <Route path="/guardrails" element={canAccess("/guardrails") ? <GuardrailBuilderPage /> : <Navigate to="/" replace />} />
           <Route path="/finops" element={canAccess("/finops") ? <FinOpsDashboardPage /> : <Navigate to="/" replace />} />
           <Route path="/build" element={canAccess("/build") ? <BuildHubPage /> : <Navigate to="/" replace />} />
+          <Route path="/playground" element={canAccess("/playground") ? <PlaygroundPage /> : <Navigate to="/" replace />} />
           <Route path="/editor" element={canAccess("/editor") ? <YamlEditorPage /> : <Navigate to="/" replace />} />
           <Route path="/audit" element={canAccess("/audit") ? <AuditExplorerPage /> : <Navigate to="/" replace />} />
           <Route path="/approvals" element={canAccess("/approvals") ? <ApprovalsPage /> : <Navigate to="/" replace />} />
