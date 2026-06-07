@@ -95,6 +95,7 @@ func reconcile(client dynamic.Interface) {
 	defer cancel()
 
 	reconcileTenants(ctx, client)
+	reconcileBackupPolicies(ctx, client)
 
 	agents, err := client.Resource(agentGVR).Namespace("arcana").List(ctx, metav1.ListOptions{})
 	if err != nil {
