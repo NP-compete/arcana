@@ -1,0 +1,54 @@
+# Air-gapped deployment values
+# Use: helm install arcana ./deploy/helm/arcana-airgap -f values-airgap.yaml
+
+global:
+  airgap: true
+  imageRegistry: "registry.internal.corp"
+  imagePullPolicy: IfNotPresent
+
+# All images from private registry
+images:
+  api: "registry.internal.corp/arcana/arcana-api:latest"
+  engine: "registry.internal.corp/arcana/arcana-engine:latest"
+  operator: "registry.internal.corp/arcana/arcana-operator:latest"
+  mesh: "registry.internal.corp/arcana/arcana-mesh:latest"
+  agui: "registry.internal.corp/arcana/arcana-agui:latest"
+  skills: "registry.internal.corp/arcana/arcana-skills:latest"
+  ward: "registry.internal.corp/arcana/arcana-ward:latest"
+  studio: "registry.internal.corp/arcana/arcana-studio:latest"
+  cache: "registry.internal.corp/arcana/arcana-cache:latest"
+  notify: "registry.internal.corp/arcana/arcana-notify:latest"
+  optimizer: "registry.internal.corp/arcana/arcana-optimizer:latest"
+
+# No external API calls
+llm:
+  provider: "local"
+  baseUrl: "http://arcana-serve.arcana.svc.cluster.local:8099"
+  model: "llama-3.1-8b"
+  apiKey: ""  # not needed for local models
+
+embedding:
+  host: "arcana-serve.arcana.svc.cluster.local:8099"
+  model: "bge-small-en-v1.5"
+
+# No telemetry or external calls
+telemetry:
+  enabled: false
+  externalEndpoints: false
+
+# Local storage only
+storage:
+  type: "minio"
+  endpoint: "minio.arcana.svc.cluster.local:9000"
+  accessKey: ""  # from secret
+  secretKey: ""  # from secret
+
+# Network restrictions
+networkPolicy:
+  enabled: true
+  denyExternalEgress: true
+  allowedCIDRs: []
+
+# FIPS 140-2 mode (when available)
+fips:
+  enabled: false

@@ -178,3 +178,22 @@ func (e *toolNotFoundError) Error() string { return "tool not found on server" }
 
 var errServerNotFound = &serverNotFoundError{}
 var errToolNotFound = &toolNotFoundError{}
+
+func (s *ToolsStore) RegisterSynthesized(name string, tool SynthesizedTool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	synthServer := MCPServer{
+		Name:        "synthesized-" + name,
+		Description: "Auto-synthesized: " + tool.Description,
+		Version:     "1.0.0",
+		Transport:   "http",
+		Tools: []ToolDef{
+			{
+				Name:        name,
+				Description: tool.Description,
+				InputSchema: tool.InputSchema,
+			},
+		},
+	}
+	s.servers[synthServer.Name] = synthServer
+}
