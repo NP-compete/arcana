@@ -20,6 +20,15 @@ use (
 	./cmd/sandbox
 	./cmd/scheduler
 	./cmd/tools
+	./cmd/cache
+	./cmd/notify
+	./cmd/optimizer
+	./cmd/hub
+	./cmd/wire
+	./cmd/graph
+	./cmd/hands
+	./cmd/channels
+	./cmd/migrate
 	./pkg/a2a
 	./pkg/acp
 	./pkg/agui
