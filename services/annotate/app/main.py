@@ -116,6 +116,70 @@ _store_lock = threading.Lock()
 _annotations: dict[str, Annotation] = {}
 _CRYSTALLIZATION_THRESHOLD = 3
 
+# --- Database persistence ---
+import psycopg2
+import psycopg2.extras
+
+_db_pool = None
+
+def _get_db():
+    global _db_pool
+    if _db_pool is not None:
+        return _db_pool
+    try:
+        _db_pool = psycopg2.connect(
+            host=os.environ.get("POSTGRES_HOST", "localhost"),
+            port=int(os.environ.get("POSTGRES_PORT", "5432")),
+            dbname=os.environ.get("POSTGRES_DB", "arcana"),
+            user=os.environ.get("POSTGRES_USER", "arcana"),
+            password=os.environ.get("POSTGRES_PASSWORD", "arcana-dev"),
+        )
+        _db_pool.autocommit = True
+        return _db_pool
+    except Exception as e:
+        log.warn("db_connect_failed", error=str(e))
+        return None
+
+def _db_insert_annotation(ann: Annotation):
+    db = _get_db()
+    if not db:
+        return
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                """INSERT INTO annotations (tenant, agent_id, topic, question, original_answer, corrected_answer)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                ("default", ann.agent_id, ann.topic, ann.question, ann.original, ann.corrected),
+            )
+    except Exception as e:
+        log.warn("db_insert_annotation_failed", error=str(e))
+
+def _db_mark_crystallized(topic: str, agent_id: str):
+    db = _get_db()
+    if not db:
+        return
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "UPDATE annotations SET crystallized = TRUE WHERE tenant = 'default' AND topic = %s AND agent_id = %s AND crystallized = FALSE",
+                (topic, agent_id),
+            )
+    except Exception as e:
+        log.warn("db_mark_crystallized_failed", error=str(e))
+
+_SKILLS_HOST = os.environ.get("SKILLS_HOST", "arcana-skills.arcana.svc.cluster.local")
+_SKILLS_PORT = os.environ.get("SKILLS_PORT", "8085")
+
+def _notify_skills_service(skill_data: dict):
+    """Call skills service to create a crystallized skill."""
+    import httpx
+    url = f"http://{_SKILLS_HOST}:{_SKILLS_PORT}/api/v1/skills/crystallize"
+    try:
+        resp = httpx.post(url, json=skill_data, timeout=10.0)
+        log.info("skills_crystallize_callback", status=resp.status_code, skill=skill_data.get("skill_name"))
+    except Exception as e:
+        log.warn("skills_crystallize_callback_failed", error=str(e))
+
 
 def _simple_embedding(text: str) -> list[float]:
     h = hashlib.sha256(text.encode()).digest()
@@ -158,6 +222,7 @@ async def submit_annotation(req: SubmitAnnotationRequest) -> Annotation:
     )
     with _store_lock:
         _annotations[ann_id] = ann
+    _db_insert_annotation(ann)
     return ann
 
 
@@ -249,10 +314,17 @@ async def crystallize(req: CrystallizeRequest) -> dict[str, Any]:
                 "status": "created",
                 "examples": [{"question": a.question, "answer": a.corrected} for a in anns[:5]],
             })
-            # Mark annotations as crystallized
             for ann in anns:
                 ann.crystallized = True
+            _db_mark_crystallized(topic, agent_id)
 
     if not crystallized:
         raise HTTPException(status_code=404, detail="no candidates meet crystallization threshold")
+
+    for skill in crystallized:
+        _notify_skills_service({
+            "patterns": [{"pattern": skill["skill_name"], "occurrences": skill["corrections_used"]}],
+            "examples": skill["examples"],
+        })
+
     return {"crystallized_skills": crystallized, "total": len(crystallized)}
