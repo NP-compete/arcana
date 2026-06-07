@@ -594,7 +594,7 @@ func (s *MeshStore) GetAgentHealthEvents(tenant, name string, limit int) []Agent
 func (s *MeshStore) GetAgentsHealthOverview(tenant string) AgentsHealthOverview {
 	var overview AgentsHealthOverview
 	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1`, tenant).Scan(&overview.TotalAgents)
-	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1 AND pod_phase = 'Running'`, tenant).Scan(&overview.HealthyAgents)
+	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1 AND pod_phase = 'Running' AND COALESCE(restart_count,0) = 0`, tenant).Scan(&overview.HealthyAgents)
 	overview.UnhealthyAgents = overview.TotalAgents - overview.HealthyAgents
 	s.db.QueryRow(`SELECT COALESCE(SUM(restart_count),0) FROM agents WHERE tenant = $1`, tenant).Scan(&overview.TotalRestarts)
 	return overview

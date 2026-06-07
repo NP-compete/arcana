@@ -380,7 +380,7 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 }
 
 func (k *K8sClient) ListPods(namespace, labelSelector string) ([]map[string]interface{}, error) {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods?labelSelector=%s", namespace, labelSelector)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods?labelSelector=%s", namespace, strings.ReplaceAll(labelSelector, " ", "%20"))
 	body, code, err := k.do("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -435,14 +435,23 @@ func ExtractPodHealth(pods []map[string]interface{}) PodHealthInfo {
 		info.Phase = "NoPods"
 		return info
 	}
+	// Assume ready until proven otherwise
+	info.Ready = true
+	allRunning := true
 	for _, pod := range pods {
 		status, _ := pod["status"].(map[string]interface{})
 		if status == nil {
+			info.Ready = false
+			allRunning = false
 			continue
 		}
 		if phase, ok := status["phase"].(string); ok {
-			info.Phase = phase
+			if phase != "Running" {
+				allRunning = false
+				info.Phase = phase
+			}
 		}
+		podReady := false
 		containers, _ := status["containerStatuses"].([]interface{})
 		for _, c := range containers {
 			cs, ok := c.(map[string]interface{})
@@ -453,7 +462,7 @@ func ExtractPodHealth(pods []map[string]interface{}) PodHealthInfo {
 				info.RestartCount += int(rc)
 			}
 			if ready, ok := cs["ready"].(bool); ok && ready {
-				info.Ready = true
+				podReady = true
 			}
 			if state, ok := cs["state"].(map[string]interface{}); ok {
 				if waiting, ok := state["waiting"].(map[string]interface{}); ok {
@@ -468,6 +477,12 @@ func ExtractPodHealth(pods []map[string]interface{}) PodHealthInfo {
 				}
 			}
 		}
+		if !podReady {
+			info.Ready = false
+		}
+	}
+	if allRunning {
+		info.Phase = "Running"
 	}
 	return info
 }

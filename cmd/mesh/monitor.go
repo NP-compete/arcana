@@ -71,21 +71,6 @@ func (m *HealthMonitor) checkAgent(tenant string, agent *MeshAgent) {
 	prevRestart, exists := m.prevRestarts[key]
 	wasHealthy := m.prevHealthy[key]
 
-	eventType := "healthy"
-	if !isHealthy {
-		if health.FailureReason != "" {
-			eventType = "failure"
-		} else {
-			eventType = "unhealthy"
-		}
-	}
-	if exists && health.RestartCount > prevRestart {
-		eventType = "restart"
-	}
-	if isHealthy && exists && !wasHealthy {
-		eventType = "recovered"
-	}
-
 	// Get deployment for replica info
 	var desiredReplicas, readyReplicas int
 	dep, _ := m.k8s.GetDeploymentStatus(ns, "deep-agent")
@@ -102,11 +87,33 @@ func (m *HealthMonitor) checkAgent(tenant string, agent *MeshAgent) {
 		}
 	}
 
-	// Record event on state changes only (don't write "healthy" every tick)
-	if eventType != "healthy" || !exists {
-		m.store.RecordHealthEvent(tenant, agent.Name, eventType,
+	// Record restart event separately so it's never silently dropped
+	restarted := exists && health.RestartCount > prevRestart
+	if restarted {
+		m.store.RecordHealthEvent(tenant, agent.Name, "restart",
 			health.RestartCount, readyReplicas, desiredReplicas,
 			health.FailureReason, health.Phase)
+	}
+
+	// Determine primary event type
+	eventType := "healthy"
+	if !isHealthy {
+		if health.FailureReason != "" {
+			eventType = "failure"
+		} else {
+			eventType = "unhealthy"
+		}
+	} else if exists && !wasHealthy {
+		eventType = "recovered"
+	}
+
+	// Record non-restart events on state changes only
+	if eventType != "healthy" || !exists {
+		if !(restarted && eventType == "restart") {
+			m.store.RecordHealthEvent(tenant, agent.Name, eventType,
+				health.RestartCount, readyReplicas, desiredReplicas,
+				health.FailureReason, health.Phase)
+		}
 	}
 
 	m.store.UpdateAgentHealth(tenant, agent.Name,
