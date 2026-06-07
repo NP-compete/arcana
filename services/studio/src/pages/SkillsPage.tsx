@@ -25,8 +25,20 @@ import {
   Spinner,
 } from "@patternfly/react-core";
 import { Table, Thead, Tr, Th, Tbody, Td } from "@patternfly/react-table";
-import { CubesIcon, PlusCircleIcon } from "@patternfly/react-icons";
+import {
+  CubesIcon,
+  PlusCircleIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  StarIcon,
+} from "@patternfly/react-icons";
 import { ShareBadge } from "../components/ShareBadge";
+import {
+  DescriptionList,
+  DescriptionListGroup,
+  DescriptionListTerm,
+  DescriptionListDescription,
+} from "@patternfly/react-core";
 
 interface CatalogEntry {
   name: string;
@@ -36,6 +48,32 @@ interface CatalogEntry {
   metadata?: Record<string, unknown>;
   created_at?: string;
 }
+
+interface SkillMemoryEntry {
+  timestamp: string;
+  agent_id: string;
+  content: string;
+}
+
+interface EvalHistoryEntry {
+  run_id: string;
+  avg_score: number;
+  pass_rate: number;
+  badge: string;
+  test_count: number;
+  regression: boolean;
+  created_at: string;
+}
+
+const badgeColor = (badge: string): "gold" | "orange" | "blue" | "red" | "grey" => {
+  switch (badge?.toLowerCase()) {
+    case "gold": return "gold";
+    case "silver": return "orange";
+    case "bronze": return "blue";
+    case "failed": return "red";
+    default: return "grey";
+  }
+};
 
 const TIER_OPTIONS = [
   { value: "planning", label: "Planning" },
@@ -90,6 +128,37 @@ export const SkillsPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+
+  const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
+  const [skillMemory, setSkillMemory] = useState<SkillMemoryEntry[]>([]);
+  const [evalHistory, setEvalHistory] = useState<EvalHistoryEntry[]>([]);
+  const [skillBadge, setSkillBadge] = useState<string>("untested");
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const toggleSkillDetail = async (skillName: string) => {
+    if (expandedSkill === skillName) {
+      setExpandedSkill(null);
+      return;
+    }
+    setExpandedSkill(skillName);
+    setDetailLoading(true);
+    try {
+      const [memRes, evalRes, skillRes] = await Promise.all([
+        fetch(`/api/v1/skills/${skillName}/memory`).then(r => r.ok ? r.json() : { memory: [] }),
+        fetch(`/api/v1/skills/${skillName}/eval-history`).then(r => r.ok ? r.json() : { eval_history: [] }),
+        fetch(`/api/v1/skills/${skillName}`).then(r => r.ok ? r.json() : {}),
+      ]);
+      setSkillMemory(memRes.memory ?? []);
+      setEvalHistory(evalRes.eval_history ?? []);
+      setSkillBadge(skillRes.quality_badge ?? "untested");
+    } catch {
+      setSkillMemory([]);
+      setEvalHistory([]);
+      setSkillBadge("untested");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const fetchSkills = useCallback(async () => {
     try {
@@ -202,20 +271,122 @@ export const SkillsPage = () => {
                 {skills.map((skill) => {
                   const rawTier = skill.metadata?.tier;
                   const skillTier = typeof rawTier === "string" ? rawTier : "—";
+                  const isExpanded = expandedSkill === skill.name;
                   return (
-                    <Tr key={skill.name}>
-                      <Td dataLabel="Name">{skill.name}</Td>
-                      <Td dataLabel="Tier">
-                        <Label color={tierLabelColor(skillTier)} isCompact>
-                          {skillTier}
-                        </Label>
-                      </Td>
-                      <Td dataLabel="Version">{skill.version}</Td>
-                      <Td dataLabel="Sharing">
-                        <ShareBadge assetType="skill" assetName={skill.name} compact />
-                      </Td>
-                      <Td dataLabel="Description">{skill.description}</Td>
-                    </Tr>
+                    <>
+                      <Tr
+                        key={skill.name}
+                        isClickable
+                        onRowClick={() => toggleSkillDetail(skill.name)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <Td dataLabel="Name">
+                          <Button variant="link" isInline onClick={() => toggleSkillDetail(skill.name)}>
+                            {skill.name}
+                          </Button>
+                        </Td>
+                        <Td dataLabel="Tier">
+                          <Label color={tierLabelColor(skillTier)} isCompact>
+                            {skillTier}
+                          </Label>
+                        </Td>
+                        <Td dataLabel="Version">{skill.version}</Td>
+                        <Td dataLabel="Sharing">
+                          <ShareBadge assetType="skill" assetName={skill.name} compact />
+                        </Td>
+                        <Td dataLabel="Description">{skill.description}</Td>
+                      </Tr>
+                      {isExpanded && (
+                        <Tr key={`${skill.name}-detail`}>
+                          <Td colSpan={5}>
+                            {detailLoading ? (
+                              <div style={{ textAlign: "center", padding: 24 }}>
+                                <Spinner size="lg" />
+                              </div>
+                            ) : (
+                              <Grid hasGutter style={{ padding: "16px 8px" }}>
+                                <GridItem span={4}>
+                                  <Card isPlain>
+                                    <CardBody>
+                                      <div style={{ fontWeight: 600, marginBottom: 12 }}>Quality Badge</div>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                        <StarIcon color={
+                                          skillBadge === "gold" ? "#d4a017"
+                                            : skillBadge === "silver" ? "#a0a0a0"
+                                            : skillBadge === "bronze" ? "#cd7f32"
+                                            : "#6b7585"
+                                        } />
+                                        <Label color={badgeColor(skillBadge)} isCompact>
+                                          {skillBadge}
+                                        </Label>
+                                      </div>
+                                    </CardBody>
+                                  </Card>
+                                </GridItem>
+                                <GridItem span={4}>
+                                  <Card isPlain>
+                                    <CardBody>
+                                      <div style={{ fontWeight: 600, marginBottom: 12 }}>
+                                        Experiential Memory ({skillMemory.length})
+                                      </div>
+                                      {skillMemory.length > 0 ? (
+                                        <div style={{ maxHeight: 200, overflow: "auto", fontSize: 13 }}>
+                                          {skillMemory.slice(0, 5).map((m, i) => (
+                                            <div key={i} style={{ marginBottom: 8, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                                              <span style={{ color: "var(--pf-t--global--text--color--subtle)", fontSize: 11 }}>
+                                                {m.timestamp} · {m.agent_id}
+                                              </span>
+                                              <div>{m.content}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <Content component="p" style={{ color: "var(--pf-t--global--text--color--subtle)", fontSize: 13 }}>
+                                          No memory entries yet.
+                                        </Content>
+                                      )}
+                                    </CardBody>
+                                  </Card>
+                                </GridItem>
+                                <GridItem span={4}>
+                                  <Card isPlain>
+                                    <CardBody>
+                                      <div style={{ fontWeight: 600, marginBottom: 12 }}>
+                                        Eval History ({evalHistory.length})
+                                      </div>
+                                      {evalHistory.length > 0 ? (
+                                        <div style={{ maxHeight: 200, overflow: "auto", fontSize: 13 }}>
+                                          {evalHistory.slice(0, 5).map((e) => (
+                                            <div key={e.run_id} style={{ marginBottom: 8, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                                              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                                <Label color={badgeColor(e.badge)} isCompact>{e.badge}</Label>
+                                                <span>{(e.avg_score * 100).toFixed(1)}%</span>
+                                                {e.regression && (
+                                                  <Label color="red" isCompact>
+                                                    <ExclamationCircleIcon /> regression
+                                                  </Label>
+                                                )}
+                                              </div>
+                                              <span style={{ color: "var(--pf-t--global--text--color--subtle)", fontSize: 11 }}>
+                                                {e.test_count} tests · {e.created_at ? new Date(e.created_at).toLocaleDateString() : "—"}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <Content component="p" style={{ color: "var(--pf-t--global--text--color--subtle)", fontSize: 13 }}>
+                                          No evaluations yet.
+                                        </Content>
+                                      )}
+                                    </CardBody>
+                                  </Card>
+                                </GridItem>
+                              </Grid>
+                            )}
+                          </Td>
+                        </Tr>
+                      )}
+                    </>
                   );
                 })}
               </Tbody>
