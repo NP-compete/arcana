@@ -94,6 +94,8 @@ func reconcile(client dynamic.Interface) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	reconcileTenants(ctx, client)
+
 	agents, err := client.Resource(agentGVR).Namespace("arcana").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		log.Printf("operator: list agents failed: %v", err)
