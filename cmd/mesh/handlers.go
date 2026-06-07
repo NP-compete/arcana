@@ -547,6 +547,23 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := extractTenant(r)
+
+	// Risk detection on inter-agent messages
+	if s.riskDetector != nil {
+		content := ""
+		if payload, ok := req.Payload["content"].(string); ok {
+			content = payload
+		} else if msg, ok := req.Payload["message"].(string); ok {
+			content = msg
+		}
+		if content != "" {
+			s.riskDetector.AnalyzeMessage(req.From, req.To, content)
+		}
+	}
+
+	// Track dependency edge
+	s.store.RecordDependency(tenant, req.From, req.To)
+
 	msg, err := s.store.SendMessage(tenant, req.From, req.To, req.Payload, req.Protocol)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
