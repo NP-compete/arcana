@@ -30,7 +30,7 @@ structlog.configure(
 )
 log = structlog.get_logger(service="skills")
 
-from _shared.auth import require_auth
+from _shared.auth import require_auth  # noqa: E402
 
 _auth_dep = Depends(require_auth)
 
