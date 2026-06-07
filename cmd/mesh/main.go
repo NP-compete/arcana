@@ -111,6 +111,8 @@ func main() {
 		writeJSON(w, http.StatusOK, srv.store.GetCascadeImpact(tenant, agent))
 	}))
 
+	httpSrv.HandleFunc("/api/v1/risk/alerts", srv.corsMiddleware(srv.handleRiskAlerts))
+
 	httpSrv.HandleFunc("/api/v1/messages", srv.corsMiddleware(srv.handleSendMessage))
 	httpSrv.HandleFunc("/api/v1/messages/", srv.corsMiddleware(srv.handleGetMessages))
 	httpSrv.HandleFunc("/api/v1/delegate", srv.corsMiddleware(srv.handleDelegate))

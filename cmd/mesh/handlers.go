@@ -22,8 +22,9 @@ func corsOrigin() string {
 }
 
 type Server struct {
-	store *MeshStore
-	k8s   *K8sClient
+	store        *MeshStore
+	k8s          *K8sClient
+	riskDetector *RiskDetector
 }
 
 func NewServer(store *MeshStore) *Server {
@@ -33,7 +34,7 @@ func NewServer(store *MeshStore) *Server {
 	} else {
 		log.Printf("k8s client initialized — agent namespaces enabled")
 	}
-	return &Server{store: store, k8s: k8s}
+	return &Server{store: store, k8s: k8s, riskDetector: NewRiskDetector(store)}
 }
 
 func extractTenant(r *http.Request) string {
