@@ -1695,5 +1695,9 @@ func main() {
 		}
 	}
 
+	// OpenAI-compatible API (drop-in replacement for OpenAI SDK clients)
+	httpSrv.HandleFunc("/v1/chat/completions", handleOpenAIChatCompletions)
+	httpSrv.HandleFunc("/v1/models", handleOpenAIModels)
+
 	httpSrv.ListenAndServe()
 }
