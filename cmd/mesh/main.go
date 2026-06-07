@@ -61,6 +61,19 @@ func main() {
 	httpSrv.HandleFunc("/api/v1/agents/suspend/", srv.corsMiddleware(srv.handleSuspendAgent))
 	httpSrv.HandleFunc("/api/v1/agents/resume/", srv.corsMiddleware(srv.handleResumeAgent))
 
+	httpSrv.HandleFunc("/api/v1/playground/start", srv.corsMiddleware(srv.handlePlaygroundStart))
+	httpSrv.HandleFunc("/api/v1/playground/", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat") {
+			srv.handlePlaygroundChat(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/end") {
+			srv.handlePlaygroundEnd(w, r)
+			return
+		}
+		srv.handlePlaygroundGet(w, r)
+	}))
+
 	httpSrv.HandleFunc("/api/v1/messages", srv.corsMiddleware(srv.handleSendMessage))
 	httpSrv.HandleFunc("/api/v1/messages/", srv.corsMiddleware(srv.handleGetMessages))
 	httpSrv.HandleFunc("/api/v1/delegate", srv.corsMiddleware(srv.handleDelegate))

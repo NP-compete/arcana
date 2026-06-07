@@ -233,6 +233,22 @@ CREATE TABLE IF NOT EXISTS eval_results (
 CREATE INDEX IF NOT EXISTS idx_eval_skill ON eval_results(skill_name);
 CREATE INDEX IF NOT EXISTS idx_eval_run ON eval_results(run_id);
 
+-- Playground sessions (sandboxed agent test-drive)
+CREATE TABLE IF NOT EXISTS playground_sessions (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    agent_name VARCHAR(255) NOT NULL,
+    agent_config JSONB DEFAULT '{}',
+    budget_limit DOUBLE PRECISION DEFAULT 1.0,
+    budget_used DOUBLE PRECISION DEFAULT 0,
+    tokens_used INTEGER DEFAULT 0,
+    message_count INTEGER DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '1 hour'
+);
+CREATE INDEX IF NOT EXISTS idx_playground_tenant ON playground_sessions(tenant, status);
+
 -- ============================================================
 -- Registry (arcana-registry)
 -- ============================================================
