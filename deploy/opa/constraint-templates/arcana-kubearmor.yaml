@@ -1,0 +1,56 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: arcanakubearmor
+spec:
+  crd:
+    spec:
+      names:
+        kind: ArcanaKubeArmor
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedProcesses:
+              type: array
+              items:
+                type: string
+            blockedPaths:
+              type: array
+              items:
+                type: string
+            networkPolicy:
+              type: string
+              enum: ["allow-all", "deny-external", "deny-all"]
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package arcanakubearmor
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.allowPrivilegeEscalation == false
+          msg := sprintf("Container %v must set allowPrivilegeEscalation=false", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.capabilities.drop
+          msg := sprintf("Container %v must drop ALL capabilities", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.spec.hostNetwork == true
+          msg := "Agent pods must not use host networking"
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.spec.hostPID == true
+          msg := "Agent pods must not use host PID namespace"
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.runAsUser == 0
+          msg := sprintf("Container %v must not run as root", [container.name])
+        }

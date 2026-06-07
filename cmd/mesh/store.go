@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"log"
 	"time"
 
@@ -487,6 +488,283 @@ func buildDelegation(id, tenant, fromAgent, toAgent string, taskType sql.NullStr
 		}
 	}
 	return task, nil
+}
+
+// --- Health monitoring store methods ---
+
+func (s *MeshStore) RecordHealthEvent(tenant, agentName, eventType string, restartCount, readyReplicas, desiredReplicas int, failureReason, podPhase string) {
+	_, err := s.db.Exec(`
+		INSERT INTO agent_health_events (tenant, agent_name, event_type, restart_count, ready_replicas, desired_replicas, failure_reason, pod_phase)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		tenant, agentName, eventType, restartCount, readyReplicas, desiredReplicas, failureReason, podPhase)
+	if err != nil {
+		log.Printf("RecordHealthEvent %s/%s: %v", tenant, agentName, err)
+	}
+}
+
+func (s *MeshStore) UpdateAgentHealth(tenant, name string, restartCount int, podPhase, failureReason string, isHealthy bool) {
+	now := time.Now().UTC()
+	if isHealthy {
+		_, err := s.db.Exec(`
+			UPDATE agents SET restart_count = $1, pod_phase = $2, last_healthy_at = $3, last_failure_reason = ''
+			WHERE tenant = $4 AND name = $5`,
+			restartCount, podPhase, now, tenant, name)
+		if err != nil {
+			log.Printf("UpdateAgentHealth %s/%s: %v", tenant, name, err)
+		}
+	} else {
+		_, err := s.db.Exec(`
+			UPDATE agents SET restart_count = $1, pod_phase = $2, last_failure_at = $3, last_failure_reason = $4
+			WHERE tenant = $5 AND name = $6`,
+			restartCount, podPhase, now, failureReason, tenant, name)
+		if err != nil {
+			log.Printf("UpdateAgentHealth %s/%s: %v", tenant, name, err)
+		}
+	}
+}
+
+func (s *MeshStore) GetAgentHealthSummary(tenant, name string) *AgentHealthSummary {
+	var (
+		restartCount      int
+		lastHealthyAt     sql.NullTime
+		lastFailureAt     sql.NullTime
+		lastFailureReason sql.NullString
+		podPhase          sql.NullString
+	)
+	err := s.db.QueryRow(`
+		SELECT COALESCE(restart_count,0), last_healthy_at, last_failure_at, last_failure_reason, pod_phase
+		FROM agents WHERE tenant = $1 AND name = $2`, tenant, name).
+		Scan(&restartCount, &lastHealthyAt, &lastFailureAt, &lastFailureReason, &podPhase)
+	if err != nil {
+		log.Printf("GetAgentHealthSummary %s/%s: %v", tenant, name, err)
+		return nil
+	}
+	summary := &AgentHealthSummary{
+		AgentName:    name,
+		RestartCount: restartCount,
+		PodPhase:     podPhase.String,
+	}
+	if lastHealthyAt.Valid {
+		summary.LastHealthyAt = &lastHealthyAt.Time
+	}
+	if lastFailureAt.Valid {
+		summary.LastFailureAt = &lastFailureAt.Time
+	}
+	if lastFailureReason.Valid {
+		summary.LastFailureReason = lastFailureReason.String
+	}
+	if podPhase.String == "Running" && restartCount == 0 {
+		summary.Status = "healthy"
+	} else if lastFailureReason.Valid && lastFailureReason.String != "" {
+		summary.Status = "unhealthy"
+	} else if restartCount > 0 {
+		summary.Status = "degraded"
+	} else {
+		summary.Status = "unknown"
+	}
+	return summary
+}
+
+func (s *MeshStore) GetAgentHealthEvents(tenant, name string, limit int) []AgentHealthEvent {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`
+		SELECT id, tenant, agent_name, event_type, restart_count, ready_replicas, desired_replicas, failure_reason, pod_phase, created_at
+		FROM agent_health_events
+		WHERE tenant = $1 AND agent_name = $2
+		ORDER BY created_at DESC LIMIT $3`, tenant, name, limit)
+	if err != nil {
+		log.Printf("GetAgentHealthEvents %s/%s: %v", tenant, name, err)
+		return []AgentHealthEvent{}
+	}
+	defer rows.Close()
+	events := make([]AgentHealthEvent, 0)
+	for rows.Next() {
+		var e AgentHealthEvent
+		if err := rows.Scan(&e.ID, &e.Tenant, &e.AgentName, &e.EventType, &e.RestartCount,
+			&e.ReadyReplicas, &e.DesiredReplicas, &e.FailureReason, &e.PodPhase, &e.CreatedAt); err != nil {
+			log.Printf("GetAgentHealthEvents scan: %v", err)
+			continue
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
+func (s *MeshStore) GetAgentsHealthOverview(tenant string) AgentsHealthOverview {
+	var overview AgentsHealthOverview
+	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1`, tenant).Scan(&overview.TotalAgents)
+	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1 AND pod_phase = 'Running' AND COALESCE(restart_count,0) = 0`, tenant).Scan(&overview.HealthyAgents)
+	overview.UnhealthyAgents = overview.TotalAgents - overview.HealthyAgents
+	s.db.QueryRow(`SELECT COALESCE(SUM(restart_count),0) FROM agents WHERE tenant = $1`, tenant).Scan(&overview.TotalRestarts)
+	return overview
+}
+
+// --- Playground session store methods ---
+
+func (s *MeshStore) CreatePlaygroundSession(session *PlaygroundSession) {
+	configJSON, _ := json.Marshal(session.AgentConfig)
+	_, err := s.db.Exec(`
+		INSERT INTO playground_sessions (id, tenant, agent_name, agent_config, budget_limit, status, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		session.ID, session.Tenant, session.AgentName, configJSON,
+		session.BudgetLimit, session.Status, session.CreatedAt, session.ExpiresAt)
+	if err != nil {
+		log.Printf("CreatePlaygroundSession: %v", err)
+	}
+}
+
+func (s *MeshStore) GetPlaygroundSession(tenant, id string) *PlaygroundSession {
+	var (
+		agentConfig []byte
+		session     PlaygroundSession
+	)
+	err := s.db.QueryRow(`
+		SELECT id, tenant, agent_name, agent_config, budget_limit, budget_used, tokens_used, message_count, status, created_at, expires_at
+		FROM playground_sessions WHERE id = $1 AND tenant = $2`, id, tenant).
+		Scan(&session.ID, &session.Tenant, &session.AgentName, &agentConfig,
+			&session.BudgetLimit, &session.BudgetUsed, &session.TokensUsed,
+			&session.MsgCount, &session.Status, &session.CreatedAt, &session.ExpiresAt)
+	if err != nil {
+		return nil
+	}
+	if len(agentConfig) > 0 {
+		json.Unmarshal(agentConfig, &session.AgentConfig)
+	}
+	if time.Now().After(session.ExpiresAt) && session.Status == "active" {
+		s.EndPlaygroundSession(tenant, id)
+		session.Status = "expired"
+	}
+	return &session
+}
+
+func (s *MeshStore) UpdatePlaygroundUsage(tenant, id string, tokens int, cost float64) {
+	_, err := s.db.Exec(`
+		UPDATE playground_sessions
+		SET tokens_used = tokens_used + $1, budget_used = budget_used + $2, message_count = message_count + 1
+		WHERE id = $3 AND tenant = $4`,
+		tokens, cost, id, tenant)
+	if err != nil {
+		log.Printf("UpdatePlaygroundUsage: %v", err)
+	}
+}
+
+func (s *MeshStore) EndPlaygroundSession(tenant, id string) {
+	_, err := s.db.Exec(`UPDATE playground_sessions SET status = 'ended' WHERE id = $1 AND tenant = $2`, id, tenant)
+	if err != nil {
+		log.Printf("EndPlaygroundSession: %v", err)
+	}
+}
+
+// --- Checkpoint store (in-memory, mirrors DB pattern) ---
+
+var checkpointStore = struct {
+	sync.RWMutex
+	items   map[string][]Checkpoint
+	counter map[string]int
+}{items: make(map[string][]Checkpoint), counter: make(map[string]int)}
+
+func (s *MeshStore) NextCheckpointVersion(tenant, agentName string) int {
+	checkpointStore.Lock()
+	defer checkpointStore.Unlock()
+	key := tenant + "/" + agentName
+	checkpointStore.counter[key]++
+	return checkpointStore.counter[key]
+}
+
+func (s *MeshStore) SaveCheckpoint(cp *Checkpoint) {
+	checkpointStore.Lock()
+	defer checkpointStore.Unlock()
+	key := cp.Tenant + "/" + cp.AgentName
+	checkpointStore.items[key] = append(checkpointStore.items[key], *cp)
+}
+
+func (s *MeshStore) ListCheckpoints(tenant, agentName string) []Checkpoint {
+	checkpointStore.RLock()
+	defer checkpointStore.RUnlock()
+	return checkpointStore.items[tenant+"/"+agentName]
+}
+
+func (s *MeshStore) GetCheckpoint(tenant, cpID string) *Checkpoint {
+	checkpointStore.RLock()
+	defer checkpointStore.RUnlock()
+	for _, cps := range checkpointStore.items {
+		for i := range cps {
+			if cps[i].ID == cpID {
+				return &cps[i]
+			}
+		}
+	}
+	return nil
+}
+
+// --- Dependency graph (tracks A2A delegations for cascade analysis) ---
+
+var depGraph = struct {
+	sync.RWMutex
+	edges map[string]map[string]int // source → target → call count
+}{edges: make(map[string]map[string]int)}
+
+func (s *MeshStore) RecordDependency(tenant, source, target string) {
+	depGraph.Lock()
+	defer depGraph.Unlock()
+	key := tenant + "/" + source
+	if depGraph.edges[key] == nil {
+		depGraph.edges[key] = make(map[string]int)
+	}
+	depGraph.edges[key][target]++
+}
+
+func (s *MeshStore) GetDependencyGraph(tenant string) []map[string]interface{} {
+	depGraph.RLock()
+	defer depGraph.RUnlock()
+	edges := make([]map[string]interface{}, 0)
+	prefix := tenant + "/"
+	for key, targets := range depGraph.edges {
+		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
+			source := key[len(prefix):]
+			for target, count := range targets {
+				edges = append(edges, map[string]interface{}{
+					"source":     source,
+					"target":     target,
+					"call_count": count,
+				})
+			}
+		}
+	}
+	return edges
+}
+
+func (s *MeshStore) GetCascadeImpact(tenant, agentName string) map[string]interface{} {
+	depGraph.RLock()
+	defer depGraph.RUnlock()
+	prefix := tenant + "/"
+
+	upstream := []string{}
+	downstream := []string{}
+
+	for key, targets := range depGraph.edges {
+		if len(key) <= len(prefix) {
+			continue
+		}
+		source := key[len(prefix):]
+		for target := range targets {
+			if target == agentName {
+				upstream = append(upstream, source)
+			}
+			if source == agentName {
+				downstream = append(downstream, target)
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"agent":              agentName,
+		"upstream_affected":  upstream,
+		"downstream_affected": downstream,
+		"total_blast_radius": len(upstream) + len(downstream),
+	}
 }
 
 var errAgentNotFound = &agentNotFoundError{}

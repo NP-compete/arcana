@@ -108,3 +108,49 @@ type DelegateRequest struct {
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
+
+// --- Health monitoring types ---
+
+type AgentHealthEvent struct {
+	ID              int64     `json:"id"`
+	Tenant          string    `json:"tenant"`
+	AgentName       string    `json:"agent_name"`
+	EventType       string    `json:"event_type"`
+	RestartCount    int       `json:"restart_count"`
+	ReadyReplicas   int       `json:"ready_replicas"`
+	DesiredReplicas int       `json:"desired_replicas"`
+	FailureReason   string    `json:"failure_reason,omitempty"`
+	PodPhase        string    `json:"pod_phase"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type AgentHealthSummary struct {
+	AgentName         string     `json:"agent_name"`
+	Status            string     `json:"status"`
+	RestartCount      int        `json:"restart_count"`
+	LastHealthyAt     *time.Time `json:"last_healthy_at,omitempty"`
+	LastFailureAt     *time.Time `json:"last_failure_at,omitempty"`
+	LastFailureReason string     `json:"last_failure_reason,omitempty"`
+	PodPhase          string     `json:"pod_phase"`
+	ReadyReplicas     int        `json:"ready_replicas"`
+	DesiredReplicas   int        `json:"desired_replicas"`
+}
+
+type AgentHealthResponse struct {
+	Summary AgentHealthSummary `json:"summary"`
+	Events  []AgentHealthEvent `json:"events"`
+}
+
+type AgentsHealthOverview struct {
+	TotalAgents     int `json:"total_agents"`
+	HealthyAgents   int `json:"healthy_agents"`
+	UnhealthyAgents int `json:"unhealthy_agents"`
+	TotalRestarts   int `json:"total_restarts"`
+}
+
+type PodHealthInfo struct {
+	Phase         string
+	RestartCount  int
+	Ready         bool
+	FailureReason string
+}

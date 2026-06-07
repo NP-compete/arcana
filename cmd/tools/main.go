@@ -16,6 +16,9 @@ func main() {
 	store := NewToolsStore()
 	srv := NewServer(store)
 
+	httpSrv.HandleFunc("/.well-known/mcp.json", srv.corsMiddleware(srv.handleMCPDiscovery))
+	httpSrv.HandleFunc("/mcp/invoke", srv.corsMiddleware(srv.handleMCPInvoke))
+	httpSrv.HandleFunc("/api/v1/tools/synthesize", srv.corsMiddleware(srv.handleSynthesizeTool))
 	httpSrv.HandleFunc("/api/v1/tools/call", srv.corsMiddleware(srv.handleCallTool))
 	httpSrv.HandleFunc("/api/v1/tools/translate", srv.corsMiddleware(srv.handleTranslate))
 	httpSrv.HandleFunc("/api/v1/tools/", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
