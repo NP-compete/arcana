@@ -30,9 +30,11 @@ import {
   CommentsIcon,
   MemoryIcon,
 } from "@patternfly/react-icons";
+import { ExclamationCircleIcon } from "@patternfly/react-icons";
 import { useNavigate } from "react-router-dom";
 import { AgentGuardrails } from "./AgentGuardrails";
 import { AgentMemory } from "./AgentMemory";
+import { useAgentHealth } from "../hooks/useAgentHealth";
 
 interface DeepConfig {
   world_model: boolean;
@@ -117,6 +119,7 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
   const [detail, setDetail] = useState<AgentDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { health: agentHealth } = useAgentHealth(agentName);
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -190,6 +193,19 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
       label: "Memories",
       value: (detail.memory?.short_term_count || 0) + (detail.memory?.long_term_count || 0),
       icon: <MemoryIcon color="var(--pf-t--global--color--status--info--default)" />,
+    },
+    {
+      label: "Restarts",
+      value: agentHealth?.summary.restart_count ?? 0,
+      icon: (
+        <ExclamationCircleIcon
+          color={
+            (agentHealth?.summary.restart_count ?? 0) > 0
+              ? "var(--pf-t--global--color--status--danger--default)"
+              : "var(--pf-t--global--color--status--success--default)"
+          }
+        />
+      ),
     },
   ];
 
@@ -655,6 +671,119 @@ export const AgentDetailView = ({ agentName, onBack }: Props) => {
             </Card>
           </GridItem>
         </Grid>
+
+        {agentHealth && (
+          <Grid hasGutter style={{ marginTop: 24 }}>
+            <GridItem span={12}>
+              <Card>
+                <CardTitle>Agent Health</CardTitle>
+                <CardBody>
+                  <DescriptionList isHorizontal>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Health Status</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        <Label
+                          color={
+                            agentHealth.summary.status === "healthy"
+                              ? "green"
+                              : agentHealth.summary.status === "unhealthy"
+                              ? "red"
+                              : agentHealth.summary.status === "degraded"
+                              ? "orange"
+                              : "grey"
+                          }
+                          isCompact
+                        >
+                          {agentHealth.summary.status}
+                        </Label>
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Pod Phase</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        {agentHealth.summary.pod_phase || "Unknown"}
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Restart Count</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        {agentHealth.summary.restart_count}
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    {agentHealth.summary.last_healthy_at && (
+                      <DescriptionListGroup>
+                        <DescriptionListTerm>Last Healthy</DescriptionListTerm>
+                        <DescriptionListDescription>
+                          {new Date(agentHealth.summary.last_healthy_at).toLocaleString()}
+                        </DescriptionListDescription>
+                      </DescriptionListGroup>
+                    )}
+                    {agentHealth.summary.last_failure_at && (
+                      <DescriptionListGroup>
+                        <DescriptionListTerm>Last Failure</DescriptionListTerm>
+                        <DescriptionListDescription>
+                          {new Date(agentHealth.summary.last_failure_at).toLocaleString()}
+                          {agentHealth.summary.last_failure_reason && (
+                            <Label color="red" isCompact style={{ marginLeft: 8 }}>
+                              {agentHealth.summary.last_failure_reason}
+                            </Label>
+                          )}
+                        </DescriptionListDescription>
+                      </DescriptionListGroup>
+                    )}
+                  </DescriptionList>
+                  {agentHealth.events.length > 0 && (
+                    <>
+                      <Divider style={{ margin: "16px 0" }} />
+                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Recent Health Events</div>
+                      <Table aria-label="Health events" variant="compact">
+                        <Thead>
+                          <Tr>
+                            <Th>Time</Th>
+                            <Th>Event</Th>
+                            <Th>Phase</Th>
+                            <Th>Restarts</Th>
+                            <Th>Reason</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {agentHealth.events.slice(0, 10).map((e) => (
+                            <Tr key={e.id}>
+                              <Td dataLabel="Time">
+                                {new Date(e.created_at).toLocaleString()}
+                              </Td>
+                              <Td dataLabel="Event">
+                                <Label
+                                  color={
+                                    e.event_type === "healthy"
+                                      ? "green"
+                                      : e.event_type === "failure"
+                                      ? "red"
+                                      : e.event_type === "restart"
+                                      ? "orange"
+                                      : e.event_type === "recovered"
+                                      ? "blue"
+                                      : "grey"
+                                  }
+                                  isCompact
+                                >
+                                  {e.event_type}
+                                </Label>
+                              </Td>
+                              <Td dataLabel="Phase">{e.pod_phase}</Td>
+                              <Td dataLabel="Restarts">{e.restart_count}</Td>
+                              <Td dataLabel="Reason">{e.failure_reason || "—"}</Td>
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
+                    </>
+                  )}
+                </CardBody>
+              </Card>
+            </GridItem>
+          </Grid>
+        )}
 
         <Grid hasGutter style={{ marginTop: 24 }}>
           <GridItem span={12}>
