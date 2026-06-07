@@ -1,0 +1,42 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: arcanacanarydeployment
+spec:
+  crd:
+    spec:
+      names:
+        kind: ArcanaCanaryDeployment
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            maxCanaryPercentage:
+              type: integer
+              minimum: 1
+              maximum: 50
+            requiredLabels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package arcanacanarydeployment
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          labels := input.review.object.metadata.labels
+          labels["arcana.io/canary"] == "true"
+          replicas := input.review.object.spec.replicas
+          replicas > input.parameters.maxCanaryPercentage
+          msg := sprintf("Canary deployment %v exceeds max %v%% traffic", [input.review.object.metadata.name, input.parameters.maxCanaryPercentage])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          labels := input.review.object.metadata.labels
+          labels["arcana.io/canary"] == "true"
+          not labels["arcana.io/canary-version"]
+          msg := "Canary deployment must have arcana.io/canary-version label"
+        }
