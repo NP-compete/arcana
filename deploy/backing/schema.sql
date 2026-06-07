@@ -200,6 +200,39 @@ CREATE TABLE IF NOT EXISTS skills (
 CREATE INDEX IF NOT EXISTS idx_skills_type ON skills(type);
 CREATE INDEX IF NOT EXISTS idx_skills_badge ON skills(quality_badge);
 
+-- Annotations (arcana-annotate) — human corrections that feed skill crystallization
+CREATE TABLE IF NOT EXISTS annotations (
+    id BIGSERIAL PRIMARY KEY,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    agent_id VARCHAR(255) NOT NULL,
+    topic VARCHAR(255) DEFAULT '',
+    question TEXT NOT NULL,
+    original_answer TEXT,
+    corrected_answer TEXT NOT NULL,
+    crystallized BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_agent ON annotations(tenant, agent_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_topic ON annotations(tenant, topic);
+CREATE INDEX IF NOT EXISTS idx_annotations_uncrystallized ON annotations(tenant, topic, crystallized) WHERE crystallized = FALSE;
+
+-- Eval results (arcana-probe) — skill evaluation history
+CREATE TABLE IF NOT EXISTS eval_results (
+    id BIGSERIAL PRIMARY KEY,
+    skill_name VARCHAR(255) NOT NULL,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    run_id VARCHAR(64) NOT NULL,
+    avg_score DOUBLE PRECISION DEFAULT 0,
+    pass_rate DOUBLE PRECISION DEFAULT 0,
+    badge VARCHAR(32) DEFAULT 'untested',
+    test_count INTEGER DEFAULT 0,
+    judge_scores JSONB DEFAULT '{}',
+    regression BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_eval_skill ON eval_results(skill_name);
+CREATE INDEX IF NOT EXISTS idx_eval_run ON eval_results(run_id);
+
 -- ============================================================
 -- Registry (arcana-registry)
 -- ============================================================
