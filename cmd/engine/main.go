@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -20,6 +21,10 @@ func main() {
 	store := NewTaskStore(dbConn)
 	react := NewReActEngine(store)
 	srv := NewServer(store, react)
+
+	if count := store.RecoverOrphaned(); count > 0 {
+		log.Printf("engine: recovered %d orphaned tasks (marked as failed)", count)
+	}
 
 	// Start Temporal worker in the background. Falls back to in-memory
 	// execution if Temporal is unreachable.

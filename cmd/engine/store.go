@@ -278,3 +278,15 @@ func buildTask(id, agent string, input []byte, status string, result, modelConfi
 	}
 	return task, nil
 }
+
+func (s *TaskStore) RecoverOrphaned() int {
+	res, err := s.db.Exec(`
+		UPDATE agent_tasks SET status = 'failed', error = 'engine restarted — task orphaned', updated_at = $1
+		WHERE status = 'running'`, time.Now().UTC())
+	if err != nil {
+		log.Printf("RecoverOrphaned: %v", err)
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return int(n)
+}
