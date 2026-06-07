@@ -1,0 +1,66 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-tauri/main/packages/api/schema.json",
+  "productName": "Arcana",
+  "version": "0.1.0",
+  "identifier": "io.arcana.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:3000",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Arcana — AI Agent Platform",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/tray-icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "Arcana"
+    },
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:* https://*; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://releases.arcana.io/{{target}}/{{arch}}/{{current_version}}"],
+      "dialog": true
+    },
+    "global-shortcut": {
+      "shortcuts": ["CmdOrCtrl+Shift+A"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "wix": null
+    },
+    "linux": {
+      "deb": { "depends": [] },
+      "appimage": { "bundleMediaFramework": false }
+    }
+  }
+}
