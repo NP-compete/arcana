@@ -21,6 +21,9 @@ func main() {
 	store := NewMeshStore(dbConn)
 	srv := NewServer(store)
 
+	monitor := NewHealthMonitor(store, srv.k8s)
+	monitor.Start()
+
 	httpSrv.HandleFunc("/.well-known/agent-card.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", corsOrigin())
@@ -35,12 +38,17 @@ func main() {
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}))
+	httpSrv.HandleFunc("/api/v1/agents/health", srv.corsMiddleware(srv.handleAgentsHealthOverview))
 	httpSrv.HandleFunc("/api/v1/agents/", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/register") {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/detail") {
 			srv.handleAgentDetail(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/health") {
+			srv.handleAgentHealth(w, r)
 			return
 		}
 		if r.Method == http.MethodDelete {

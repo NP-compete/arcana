@@ -6,11 +6,13 @@ import {
   Alert,
 } from "@patternfly/react-core";
 import { useHealth } from "../hooks/useHealth";
+import { useAgentsHealthOverview } from "../hooks/useAgentHealth";
 import { useAuth } from "../auth/AuthContext";
 
 export const DashboardPage = () => {
   const navigate = useNavigate();
   const { health, error, loading } = useHealth(5000);
+  const { overview: agentHealth } = useAgentsHealthOverview();
   const { user, isAtLeast } = useAuth();
   const [agentCount, setAgentCount] = useState<{ total: number } | null>(null);
   const [skillCount, setSkillCount] = useState(0);
@@ -203,9 +205,27 @@ export const DashboardPage = () => {
               <div>
                 <div style={{ color: "#6b7585", fontSize: 11, marginBottom: 4 }}>Total</div>
                 <div style={{ color: "#fff", fontSize: 28, fontWeight: 700 }}>
-                  {loading ? <Spinner size="md" /> : (agentCount?.total ?? "–")}
+                  {loading ? <Spinner size="md" /> : (agentHealth?.total_agents ?? agentCount?.total ?? "–")}
                 </div>
               </div>
+              {agentHealth && (
+                <>
+                  <div>
+                    <div style={{ color: "#6b7585", fontSize: 11, marginBottom: 4 }}>Healthy</div>
+                    <div style={{ color: "#22c55e", fontSize: 28, fontWeight: 700 }}>
+                      {agentHealth.healthy_agents}
+                    </div>
+                  </div>
+                  {agentHealth.total_restarts > 0 && (
+                    <div>
+                      <div style={{ color: "#6b7585", fontSize: 11, marginBottom: 4 }}>Restarts</div>
+                      <div style={{ color: "#f59e0b", fontSize: 28, fontWeight: 700 }}>
+                        {agentHealth.total_restarts}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 

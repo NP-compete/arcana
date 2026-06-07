@@ -305,6 +305,7 @@ export const AgentsPage = () => {
                   <Th>Name</Th>
                   <Th>Type</Th>
                   <Th>Status</Th>
+                  <Th>Health</Th>
                   <Th>Capabilities</Th>
                   <Th>Protocols</Th>
                 </Tr>
@@ -333,6 +334,17 @@ export const AgentsPage = () => {
                       <Label color={statusColor(agent.status)} isCompact>
                         {agent.status}
                       </Label>
+                    </Td>
+                    <Td dataLabel="Health">
+                      {agent.status === "active" || agent.status === "busy" ? (
+                        <Label color="green" isCompact>healthy</Label>
+                      ) : agent.status === "offline" ? (
+                        <Label color="red" isCompact>down</Label>
+                      ) : agent.status === "suspended" ? (
+                        <Label color="grey" isCompact>suspended</Label>
+                      ) : (
+                        <Label color="grey" isCompact>—</Label>
+                      )}
                     </Td>
                     <Td dataLabel="Capabilities">
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>

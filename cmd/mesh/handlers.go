@@ -660,17 +660,22 @@ type AgentDetail struct {
 
 	Uptime string `json:"uptime"`
 
-	Memory     MemoryInfo    `json:"memory"`
-	Kubernetes K8sInfo       `json:"kubernetes"`
-	DeepPod    *DeepPodInfo  `json:"deep_pod,omitempty"`
+	Memory     MemoryInfo          `json:"memory"`
+	Kubernetes K8sInfo             `json:"kubernetes"`
+	DeepPod    *DeepPodInfo        `json:"deep_pod,omitempty"`
+	Health     *AgentHealthSummary `json:"health,omitempty"`
 }
 
 type DeepPodInfo struct {
-	Deployed     bool   `json:"deployed"`
-	Status       string `json:"status"`
-	Endpoint     string `json:"endpoint"`
-	Replicas     int    `json:"replicas"`
-	ReadyReplicas int   `json:"ready_replicas"`
+	Deployed          bool   `json:"deployed"`
+	Status            string `json:"status"`
+	Endpoint          string `json:"endpoint"`
+	Replicas          int    `json:"replicas"`
+	ReadyReplicas     int    `json:"ready_replicas"`
+	RestartCount      int    `json:"restart_count"`
+	LastFailureAt     string `json:"last_failure_at,omitempty"`
+	LastFailureReason string `json:"last_failure_reason,omitempty"`
+	PodPhase          string `json:"pod_phase"`
 }
 
 type MemoryInfo struct {
@@ -841,6 +846,19 @@ func (s *Server) handleAgentDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	healthSummary := s.store.GetAgentHealthSummary(tenant, name)
+	if healthSummary != nil {
+		detail.Health = healthSummary
+		if detail.DeepPod != nil {
+			detail.DeepPod.RestartCount = healthSummary.RestartCount
+			detail.DeepPod.PodPhase = healthSummary.PodPhase
+			detail.DeepPod.LastFailureReason = healthSummary.LastFailureReason
+			if healthSummary.LastFailureAt != nil {
+				detail.DeepPod.LastFailureAt = healthSummary.LastFailureAt.Format(time.RFC3339)
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -878,7 +896,11 @@ func (s *Server) handleSuspendAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.k8s != nil {
-		log.Printf("suspending agent %s: scaling deployment to 0 in %s", name, ns)
+		if err := s.k8s.ScaleDeployment(ns, "deep-agent", 0); err != nil {
+			log.Printf("suspend: scale to 0 failed for %s: %v", name, err)
+		} else {
+			log.Printf("suspend: scaled %s/deep-agent to 0 replicas", ns)
+		}
 	}
 
 	s.store.UpdateAgentStatus(tenant, name, AgentStatusSuspended)
@@ -911,12 +933,50 @@ func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.k8s != nil {
-		log.Printf("resuming agent %s: scaling deployment to 1 in %s", name, ns)
+		if err := s.k8s.ScaleDeployment(ns, "deep-agent", 1); err != nil {
+			log.Printf("resume: scale to 1 failed for %s: %v", name, err)
+		} else {
+			log.Printf("resume: scaled %s/deep-agent to 1 replica", ns)
+		}
 	}
 
 	s.store.UpdateAgentStatus(tenant, name, AgentStatusActive)
 
 	writeJSON(w, http.StatusOK, resume)
+}
+
+func (s *Server) handleAgentHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/agents/")
+	name := strings.TrimSuffix(path, "/health")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "agent name required")
+		return
+	}
+	tenant := extractTenant(r)
+	summary := s.store.GetAgentHealthSummary(tenant, name)
+	if summary == nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	events := s.store.GetAgentHealthEvents(tenant, name, 20)
+	writeJSON(w, http.StatusOK, AgentHealthResponse{
+		Summary: *summary,
+		Events:  events,
+	})
+}
+
+func (s *Server) handleAgentsHealthOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	tenant := extractTenant(r)
+	overview := s.store.GetAgentsHealthOverview(tenant)
+	writeJSON(w, http.StatusOK, overview)
 }
 
 func (s *Server) processDelegation(taskID string) {

@@ -489,6 +489,117 @@ func buildDelegation(id, tenant, fromAgent, toAgent string, taskType sql.NullStr
 	return task, nil
 }
 
+// --- Health monitoring store methods ---
+
+func (s *MeshStore) RecordHealthEvent(tenant, agentName, eventType string, restartCount, readyReplicas, desiredReplicas int, failureReason, podPhase string) {
+	_, err := s.db.Exec(`
+		INSERT INTO agent_health_events (tenant, agent_name, event_type, restart_count, ready_replicas, desired_replicas, failure_reason, pod_phase)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		tenant, agentName, eventType, restartCount, readyReplicas, desiredReplicas, failureReason, podPhase)
+	if err != nil {
+		log.Printf("RecordHealthEvent %s/%s: %v", tenant, agentName, err)
+	}
+}
+
+func (s *MeshStore) UpdateAgentHealth(tenant, name string, restartCount int, podPhase, failureReason string, isHealthy bool) {
+	now := time.Now().UTC()
+	if isHealthy {
+		_, err := s.db.Exec(`
+			UPDATE agents SET restart_count = $1, pod_phase = $2, last_healthy_at = $3, last_failure_reason = ''
+			WHERE tenant = $4 AND name = $5`,
+			restartCount, podPhase, now, tenant, name)
+		if err != nil {
+			log.Printf("UpdateAgentHealth %s/%s: %v", tenant, name, err)
+		}
+	} else {
+		_, err := s.db.Exec(`
+			UPDATE agents SET restart_count = $1, pod_phase = $2, last_failure_at = $3, last_failure_reason = $4
+			WHERE tenant = $5 AND name = $6`,
+			restartCount, podPhase, now, failureReason, tenant, name)
+		if err != nil {
+			log.Printf("UpdateAgentHealth %s/%s: %v", tenant, name, err)
+		}
+	}
+}
+
+func (s *MeshStore) GetAgentHealthSummary(tenant, name string) *AgentHealthSummary {
+	var (
+		restartCount      int
+		lastHealthyAt     sql.NullTime
+		lastFailureAt     sql.NullTime
+		lastFailureReason sql.NullString
+		podPhase          sql.NullString
+	)
+	err := s.db.QueryRow(`
+		SELECT COALESCE(restart_count,0), last_healthy_at, last_failure_at, last_failure_reason, pod_phase
+		FROM agents WHERE tenant = $1 AND name = $2`, tenant, name).
+		Scan(&restartCount, &lastHealthyAt, &lastFailureAt, &lastFailureReason, &podPhase)
+	if err != nil {
+		log.Printf("GetAgentHealthSummary %s/%s: %v", tenant, name, err)
+		return nil
+	}
+	summary := &AgentHealthSummary{
+		AgentName:    name,
+		RestartCount: restartCount,
+		PodPhase:     podPhase.String,
+	}
+	if lastHealthyAt.Valid {
+		summary.LastHealthyAt = &lastHealthyAt.Time
+	}
+	if lastFailureAt.Valid {
+		summary.LastFailureAt = &lastFailureAt.Time
+	}
+	if lastFailureReason.Valid {
+		summary.LastFailureReason = lastFailureReason.String
+	}
+	if podPhase.String == "Running" && restartCount == 0 {
+		summary.Status = "healthy"
+	} else if lastFailureReason.Valid && lastFailureReason.String != "" {
+		summary.Status = "unhealthy"
+	} else if restartCount > 0 {
+		summary.Status = "degraded"
+	} else {
+		summary.Status = "unknown"
+	}
+	return summary
+}
+
+func (s *MeshStore) GetAgentHealthEvents(tenant, name string, limit int) []AgentHealthEvent {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`
+		SELECT id, tenant, agent_name, event_type, restart_count, ready_replicas, desired_replicas, failure_reason, pod_phase, created_at
+		FROM agent_health_events
+		WHERE tenant = $1 AND agent_name = $2
+		ORDER BY created_at DESC LIMIT $3`, tenant, name, limit)
+	if err != nil {
+		log.Printf("GetAgentHealthEvents %s/%s: %v", tenant, name, err)
+		return []AgentHealthEvent{}
+	}
+	defer rows.Close()
+	events := make([]AgentHealthEvent, 0)
+	for rows.Next() {
+		var e AgentHealthEvent
+		if err := rows.Scan(&e.ID, &e.Tenant, &e.AgentName, &e.EventType, &e.RestartCount,
+			&e.ReadyReplicas, &e.DesiredReplicas, &e.FailureReason, &e.PodPhase, &e.CreatedAt); err != nil {
+			log.Printf("GetAgentHealthEvents scan: %v", err)
+			continue
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
+func (s *MeshStore) GetAgentsHealthOverview(tenant string) AgentsHealthOverview {
+	var overview AgentsHealthOverview
+	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1`, tenant).Scan(&overview.TotalAgents)
+	s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE tenant = $1 AND pod_phase = 'Running' AND COALESCE(restart_count,0) = 0`, tenant).Scan(&overview.HealthyAgents)
+	overview.UnhealthyAgents = overview.TotalAgents - overview.HealthyAgents
+	s.db.QueryRow(`SELECT COALESCE(SUM(restart_count),0) FROM agents WHERE tenant = $1`, tenant).Scan(&overview.TotalRestarts)
+	return overview
+}
+
 var errAgentNotFound = &agentNotFoundError{}
 
 type agentNotFoundError struct{}
