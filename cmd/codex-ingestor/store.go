@@ -3,7 +3,10 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -148,11 +151,61 @@ func chunkContent(content string) []string {
 }
 
 func generateEmbedding(content string) []float64 {
+	vec := callEmbeddingAPI(content)
+	if vec != nil {
+		return vec
+	}
+	return localEmbedding(content)
+}
+
+func callEmbeddingAPI(content string) []float64 {
+	embedHost := os.Getenv("EMBEDDING_HOST")
+	if embedHost == "" {
+		return nil
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"input": content,
+		"model": os.Getenv("EMBEDDING_MODEL"),
+	})
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/v1/embeddings", embedHost),
+		"application/json",
+		strings.NewReader(string(payload)),
+	)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil
+	}
+	var result struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil || len(result.Data) == 0 {
+		return nil
+	}
+	return result.Data[0].Embedding
+}
+
+func localEmbedding(content string) []float64 {
 	vec := make([]float64, 16)
 	lower := strings.ToLower(content)
 	for i, c := range lower {
 		idx := i % 16
 		vec[idx] += float64(c%31+1) / 100.0
+	}
+	norm := 0.0
+	for _, v := range vec {
+		norm += v * v
+	}
+	if norm > 0 {
+		norm = 1.0 / (norm * 0.5)
+		for i := range vec {
+			vec[i] *= norm
+		}
 	}
 	return vec
 }

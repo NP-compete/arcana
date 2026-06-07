@@ -116,6 +116,29 @@ CREATE TABLE IF NOT EXISTS delegations (
 );
 CREATE INDEX IF NOT EXISTS idx_delegations_tenant ON delegations(tenant);
 
+-- Agent health events (health monitor writes state changes here)
+CREATE TABLE IF NOT EXISTS agent_health_events (
+    id BIGSERIAL PRIMARY KEY,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    agent_name VARCHAR(255) NOT NULL,
+    event_type VARCHAR(32) NOT NULL,
+    restart_count INTEGER DEFAULT 0,
+    ready_replicas INTEGER DEFAULT 0,
+    desired_replicas INTEGER DEFAULT 0,
+    failure_reason TEXT DEFAULT '',
+    pod_phase VARCHAR(32) DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_health_agent ON agent_health_events(tenant, agent_name);
+CREATE INDEX IF NOT EXISTS idx_health_created ON agent_health_events(created_at);
+
+-- Cached health columns on agents (fast reads without joining events)
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS restart_count INTEGER DEFAULT 0;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_healthy_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_failure_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_failure_reason TEXT DEFAULT '';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS pod_phase VARCHAR(32) DEFAULT '';
+
 -- ============================================================
 -- Engine (arcana-engine)
 -- ============================================================
@@ -176,6 +199,55 @@ CREATE TABLE IF NOT EXISTS skills (
 );
 CREATE INDEX IF NOT EXISTS idx_skills_type ON skills(type);
 CREATE INDEX IF NOT EXISTS idx_skills_badge ON skills(quality_badge);
+
+-- Annotations (arcana-annotate) — human corrections that feed skill crystallization
+CREATE TABLE IF NOT EXISTS annotations (
+    id BIGSERIAL PRIMARY KEY,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    agent_id VARCHAR(255) NOT NULL,
+    topic VARCHAR(255) DEFAULT '',
+    question TEXT NOT NULL,
+    original_answer TEXT,
+    corrected_answer TEXT NOT NULL,
+    crystallized BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_agent ON annotations(tenant, agent_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_topic ON annotations(tenant, topic);
+CREATE INDEX IF NOT EXISTS idx_annotations_uncrystallized ON annotations(tenant, topic, crystallized) WHERE crystallized = FALSE;
+
+-- Eval results (arcana-probe) — skill evaluation history
+CREATE TABLE IF NOT EXISTS eval_results (
+    id BIGSERIAL PRIMARY KEY,
+    skill_name VARCHAR(255) NOT NULL,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    run_id VARCHAR(64) NOT NULL,
+    avg_score DOUBLE PRECISION DEFAULT 0,
+    pass_rate DOUBLE PRECISION DEFAULT 0,
+    badge VARCHAR(32) DEFAULT 'untested',
+    test_count INTEGER DEFAULT 0,
+    judge_scores JSONB DEFAULT '{}',
+    regression BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_eval_skill ON eval_results(skill_name);
+CREATE INDEX IF NOT EXISTS idx_eval_run ON eval_results(run_id);
+
+-- Playground sessions (sandboxed agent test-drive)
+CREATE TABLE IF NOT EXISTS playground_sessions (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    agent_name VARCHAR(255) NOT NULL,
+    agent_config JSONB DEFAULT '{}',
+    budget_limit DOUBLE PRECISION DEFAULT 1.0,
+    budget_used DOUBLE PRECISION DEFAULT 0,
+    tokens_used INTEGER DEFAULT 0,
+    message_count INTEGER DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '1 hour'
+);
+CREATE INDEX IF NOT EXISTS idx_playground_tenant ON playground_sessions(tenant, status);
 
 -- ============================================================
 -- Registry (arcana-registry)

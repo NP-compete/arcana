@@ -170,6 +170,64 @@ class CompareRequest(BaseModel):
 _store_lock = threading.Lock()
 _runs: dict[str, EvalRun] = {}
 
+# --- Database persistence + skills integration ---
+import psycopg2
+
+_db_pool = None
+
+def _get_db():
+    global _db_pool
+    if _db_pool is not None:
+        return _db_pool
+    try:
+        _db_pool = psycopg2.connect(
+            host=os.environ.get("POSTGRES_HOST", "localhost"),
+            port=int(os.environ.get("POSTGRES_PORT", "5432")),
+            dbname=os.environ.get("POSTGRES_DB", "arcana"),
+            user=os.environ.get("POSTGRES_USER", "arcana"),
+            password=os.environ.get("POSTGRES_PASSWORD", "arcana-dev"),
+        )
+        _db_pool.autocommit = True
+        return _db_pool
+    except Exception as e:
+        log.warn("db_connect_failed", error=str(e))
+        return None
+
+def _db_persist_eval(run: EvalRun, avg_score: float, pass_rate: float):
+    db = _get_db()
+    if not db:
+        return
+    try:
+        import json
+        judge_scores = {}
+        if run.results:
+            judge_scores = run.results[0].judge_scores
+        with db.cursor() as cur:
+            cur.execute(
+                """INSERT INTO eval_results (skill_name, tenant, run_id, avg_score, pass_rate, badge, test_count, judge_scores, regression)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (run.skill_ref, "default", run.run_id, avg_score, pass_rate,
+                 run.badge.level if run.badge else "untested",
+                 len(run.cases), json.dumps(judge_scores), run.regression),
+            )
+    except Exception as e:
+        log.warn("db_persist_eval_failed", error=str(e))
+
+def _update_skill_badge(skill_name: str, badge: str):
+    """Update the quality_badge on the skills table."""
+    db = _get_db()
+    if not db:
+        return
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "UPDATE skills SET quality_badge = %s, updated_at = NOW() WHERE name = %s",
+                (badge, skill_name),
+            )
+            log.info("skill_badge_updated", skill=skill_name, badge=badge)
+    except Exception as e:
+        log.warn("skill_badge_update_failed", error=str(e))
+
 
 def _default_judges() -> list[Judge]:
     return [
@@ -370,6 +428,8 @@ def _execute_run(run_id: str) -> None:
     avg_score = sum(r.score for r in results) / max(len(results), 1)
     badge = _compute_badge(avg_score, results)
 
+    pass_rate = sum(1 for r in results if r.passed) / max(len(results), 1)
+
     with _store_lock:
         run = _runs.get(run_id)
         if run:
@@ -377,6 +437,8 @@ def _execute_run(run_id: str) -> None:
             run.badge = badge
             run.status = EvalStatus.COMPLETED
             run.completed_at = datetime.now(UTC)
+            _db_persist_eval(run, avg_score, pass_rate)
+            _update_skill_badge(run.skill_ref, badge.level)
 
 
 @app.get("/readyz")

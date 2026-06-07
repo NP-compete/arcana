@@ -511,6 +511,56 @@ async def get_skill_memory(name: str, auth: dict = _auth_dep):
     return {"memory": skill.get("memory", [])}
 
 
+@app.get("/api/v1/skills/{name}/memory.md")
+async def export_skill_memory_md(name: str):
+    """Export skill memory as .memory.md format (MUSE-Autoskill standard)."""
+    if pool:
+        row = await pool.fetchrow("SELECT name, description, memory FROM skills WHERE name = $1", name)
+        if not row:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        memory = json.loads(row["memory"]) if row["memory"] else []
+        md = f"# Skill Memory: {row['name']}\n\n"
+        md += f"> {row['description'] or 'No description'}\n\n"
+        md += f"## Experiential Notes ({len(memory)} entries)\n\n"
+        for entry in memory:
+            ts = entry.get("timestamp", "unknown")
+            agent = entry.get("agent_id", "unknown")
+            content = entry.get("content", "")
+            md += f"- **[{ts}]** (agent: {agent}) {content}\n"
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(md, media_type="text/markdown")
+    raise HTTPException(status_code=503, detail="Database not available")
+
+
+@app.get("/api/v1/skills/{name}/eval-history")
+async def get_skill_eval_history(name: str, limit: int = 20):
+    """Get evaluation history for a skill from eval_results table."""
+    if pool:
+        rows = await pool.fetch(
+            """SELECT run_id, avg_score, pass_rate, badge, test_count, regression, created_at
+               FROM eval_results WHERE skill_name = $1
+               ORDER BY created_at DESC LIMIT $2""",
+            name, limit,
+        )
+        return {
+            "skill_name": name,
+            "eval_history": [
+                {
+                    "run_id": r["run_id"],
+                    "avg_score": float(r["avg_score"]),
+                    "pass_rate": float(r["pass_rate"]),
+                    "badge": r["badge"],
+                    "test_count": r["test_count"],
+                    "regression": r["regression"],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        }
+    return {"skill_name": name, "eval_history": [], "total": 0}
+
+
 # ---------------------------------------------------------------------------
 # Marketplace
 # ---------------------------------------------------------------------------

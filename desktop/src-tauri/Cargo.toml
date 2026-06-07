@@ -1,0 +1,19 @@
+[package]
+name = "arcana-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Arcana Desktop — native app for the AI agent platform"
+authors = ["Arcana Team"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

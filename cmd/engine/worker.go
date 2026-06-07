@@ -34,7 +34,15 @@ func startWorker(store *TaskStore, react *ReActEngine) {
 
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(AgentTaskWorkflow)
-	w.RegisterActivity(&Activities{store: store, react: react})
+	w.RegisterActivity(&Activities{
+		store:     store,
+		react:     react,
+		llm:       NewLLMClient(),
+		services:  NewServiceClients(),
+		contexts:  make(map[string]*ContextDAG),
+		retrieval: NewRetrievalPolicy(),
+		planner:   NewMCTSPlanner(),
+	})
 
 	go func() {
 		if err := w.Run(worker.InterruptCh()); err != nil {
