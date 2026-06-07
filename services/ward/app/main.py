@@ -361,9 +361,41 @@ def _layer_risk_chain(text: str, direction: Direction, context: dict[str, Any]) 
     return LayerResult(layer="risk_chain", verdict=Verdict.ALLOW, passed=True, detail="risk chain passed", latency_ms=(time.perf_counter() - start) * 1000)
 
 
+_OPA_HOST = os.environ.get("OPA_HOST", "")
+_OPA_PORT = os.environ.get("OPA_PORT", "8181")
+
+
+def _layer_opa_check(text: str, agent_id: str, direction: str, context: dict[str, Any]) -> LayerResult:
+    """Evaluate request against OPA policy engine if configured."""
+    start = time.perf_counter()
+    if not _OPA_HOST:
+        return LayerResult(layer="opa_check", verdict=Verdict.ALLOW, passed=True, detail="OPA not configured (skipped)", latency_ms=(time.perf_counter() - start) * 1000)
+    try:
+        import httpx
+        opa_input = {
+            "input": {
+                "agent_id": agent_id,
+                "direction": direction,
+                "text_length": len(text),
+                "context": context,
+            }
+        }
+        resp = httpx.post(f"http://{_OPA_HOST}:{_OPA_PORT}/v1/data/arcana/guardrail/allow", json=opa_input, timeout=2.0)
+        if resp.status_code == 200:
+            result = resp.json()
+            allowed = result.get("result", True)
+            if not allowed:
+                return LayerResult(layer="opa_check", verdict=Verdict.BLOCK, passed=False, detail="OPA policy denied request", latency_ms=(time.perf_counter() - start) * 1000)
+        return LayerResult(layer="opa_check", verdict=Verdict.ALLOW, passed=True, detail="OPA policy passed", latency_ms=(time.perf_counter() - start) * 1000)
+    except Exception as e:
+        log.warn("opa_check_failed", error=str(e))
+        return LayerResult(layer="opa_check", verdict=Verdict.ALLOW, passed=True, detail=f"OPA unavailable: {e}", latency_ms=(time.perf_counter() - start) * 1000)
+
+
 def _run_pipeline(text: str, agent_id: str, direction: Direction, context: dict[str, Any]) -> GuardrailCheck:
     layers = [
         _layer_schema_validation(text, context),
+        _layer_opa_check(text, agent_id, direction.value, context),
         _layer_policy_check(text, agent_id),
         _layer_rate_limiting(agent_id),
         _layer_pattern_prefilter(text, agent_id),

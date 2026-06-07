@@ -55,6 +55,8 @@ func (a *Activities) PlanActivity(_ context.Context, task TaskRequest, step int)
 		t.CurrentStep = step + 1
 	})
 
+	a.services.AppendAudit(task.Agent, "plan", task.Goal, action, "allow")
+
 	return &PlanResult{
 		Action: action,
 		Tool:   tool,
@@ -77,6 +79,8 @@ func (a *Activities) ActActivity(_ context.Context, plan PlanResult) (*ActionRes
 			Error:  err.Error(),
 		}, nil
 	}
+
+	a.services.AppendAudit(plan.Tool, "act", plan.Action, output, "allow")
 
 	return &ActionResult{
 		Output: output,
