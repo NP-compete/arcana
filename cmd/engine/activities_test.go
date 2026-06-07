@@ -53,15 +53,12 @@ func TestParsePlanResponse(t *testing.T) {
 
 func TestPlanActivity_BlockedByWard(t *testing.T) {
 	acts := &Activities{
-		llm:      NewLLMClient(),
-		services: &ServiceClients{},
-		contexts: make(map[string]*ContextDAG),
+		llm:       NewLLMClient(),
+		services:  NewServiceClients(),
+		contexts:  make(map[string]*ContextDAG),
 		retrieval: NewRetrievalPolicy(),
 	}
-
-	acts.services = &ServiceClients{
-		wardHost: "nonexistent",
-	}
+	acts.services.wardHost = "nonexistent"
 
 	task := TaskRequest{
 		ID:    "test-1",

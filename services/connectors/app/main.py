@@ -141,8 +141,8 @@ class PostgresConnector(ConnectorPlugin):
             )
             total_rows = 0
             for t in tables:
-                count = await conn.fetchval(  # noqa: S608  # nosec B608 - values from pg_tables, not user input
-                    f'SELECT COUNT(*) FROM "{t["schemaname"]}"."{t["tablename"]}"'
+                count = await conn.fetchval(
+                    f'SELECT COUNT(*) FROM "{t["schemaname"]}"."{t["tablename"]}"'  # nosec B608
                 )
                 total_rows += count
             await conn.close()
