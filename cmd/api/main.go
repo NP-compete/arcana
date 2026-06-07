@@ -1695,6 +1695,9 @@ func main() {
 		}
 	}
 
+	// Compliance reporting
+	httpSrv.HandleFunc("/api/v1/compliance/report", handleComplianceReport)
+
 	// OpenAI-compatible API (drop-in replacement for OpenAI SDK clients)
 	httpSrv.HandleFunc("/v1/chat/completions", handleOpenAIChatCompletions)
 	httpSrv.HandleFunc("/v1/models", handleOpenAIModels)
