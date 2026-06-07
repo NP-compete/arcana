@@ -116,6 +116,29 @@ CREATE TABLE IF NOT EXISTS delegations (
 );
 CREATE INDEX IF NOT EXISTS idx_delegations_tenant ON delegations(tenant);
 
+-- Agent health events (health monitor writes state changes here)
+CREATE TABLE IF NOT EXISTS agent_health_events (
+    id BIGSERIAL PRIMARY KEY,
+    tenant VARCHAR(255) NOT NULL DEFAULT 'default',
+    agent_name VARCHAR(255) NOT NULL,
+    event_type VARCHAR(32) NOT NULL,
+    restart_count INTEGER DEFAULT 0,
+    ready_replicas INTEGER DEFAULT 0,
+    desired_replicas INTEGER DEFAULT 0,
+    failure_reason TEXT DEFAULT '',
+    pod_phase VARCHAR(32) DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_health_agent ON agent_health_events(tenant, agent_name);
+CREATE INDEX IF NOT EXISTS idx_health_created ON agent_health_events(created_at);
+
+-- Cached health columns on agents (fast reads without joining events)
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS restart_count INTEGER DEFAULT 0;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_healthy_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_failure_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_failure_reason TEXT DEFAULT '';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS pod_phase VARCHAR(32) DEFAULT '';
+
 -- ============================================================
 -- Engine (arcana-engine)
 -- ============================================================

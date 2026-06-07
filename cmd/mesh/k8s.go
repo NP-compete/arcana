@@ -378,3 +378,96 @@ func (k *K8sClient) ListNamespaceResources(namespace string) (map[string]int, er
 
 	return counts, nil
 }
+
+func (k *K8sClient) ListPods(namespace, labelSelector string) ([]map[string]interface{}, error) {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods?labelSelector=%s", namespace, labelSelector)
+	body, code, err := k.do("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code != 200 {
+		return nil, fmt.Errorf("list pods: HTTP %d", code)
+	}
+	var result map[string]interface{}
+	json.Unmarshal(body, &result)
+	items, ok := result["items"].([]interface{})
+	if !ok {
+		return nil, nil
+	}
+	pods := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if pod, ok := item.(map[string]interface{}); ok {
+			pods = append(pods, pod)
+		}
+	}
+	return pods, nil
+}
+
+func (k *K8sClient) ScaleDeployment(namespace, name string, replicas int) error {
+	scale := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"replicas": replicas,
+		},
+	}
+	patch, _ := json.Marshal(scale)
+	req, err := http.NewRequest("PATCH",
+		k.host+fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, name),
+		bytes.NewReader(patch))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+k.token)
+	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
+	resp, err := k.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("scale deployment %s/%s to %d: HTTP %d", namespace, name, replicas, resp.StatusCode)
+	}
+	return nil
+}
+
+func ExtractPodHealth(pods []map[string]interface{}) PodHealthInfo {
+	info := PodHealthInfo{Phase: "Unknown"}
+	if len(pods) == 0 {
+		info.Phase = "NoPods"
+		return info
+	}
+	for _, pod := range pods {
+		status, _ := pod["status"].(map[string]interface{})
+		if status == nil {
+			continue
+		}
+		if phase, ok := status["phase"].(string); ok {
+			info.Phase = phase
+		}
+		containers, _ := status["containerStatuses"].([]interface{})
+		for _, c := range containers {
+			cs, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if rc, ok := cs["restartCount"].(float64); ok {
+				info.RestartCount += int(rc)
+			}
+			if ready, ok := cs["ready"].(bool); ok && ready {
+				info.Ready = true
+			}
+			if state, ok := cs["state"].(map[string]interface{}); ok {
+				if waiting, ok := state["waiting"].(map[string]interface{}); ok {
+					if reason, ok := waiting["reason"].(string); ok {
+						info.FailureReason = reason
+					}
+				}
+				if terminated, ok := state["terminated"].(map[string]interface{}); ok {
+					if reason, ok := terminated["reason"].(string); ok && info.FailureReason == "" {
+						info.FailureReason = reason
+					}
+				}
+			}
+		}
+	}
+	return info
+}
