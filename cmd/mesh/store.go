@@ -600,6 +600,62 @@ func (s *MeshStore) GetAgentsHealthOverview(tenant string) AgentsHealthOverview 
 	return overview
 }
 
+// --- Playground session store methods ---
+
+func (s *MeshStore) CreatePlaygroundSession(session *PlaygroundSession) {
+	configJSON, _ := json.Marshal(session.AgentConfig)
+	_, err := s.db.Exec(`
+		INSERT INTO playground_sessions (id, tenant, agent_name, agent_config, budget_limit, status, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		session.ID, session.Tenant, session.AgentName, configJSON,
+		session.BudgetLimit, session.Status, session.CreatedAt, session.ExpiresAt)
+	if err != nil {
+		log.Printf("CreatePlaygroundSession: %v", err)
+	}
+}
+
+func (s *MeshStore) GetPlaygroundSession(tenant, id string) *PlaygroundSession {
+	var (
+		agentConfig []byte
+		session     PlaygroundSession
+	)
+	err := s.db.QueryRow(`
+		SELECT id, tenant, agent_name, agent_config, budget_limit, budget_used, tokens_used, message_count, status, created_at, expires_at
+		FROM playground_sessions WHERE id = $1 AND tenant = $2`, id, tenant).
+		Scan(&session.ID, &session.Tenant, &session.AgentName, &agentConfig,
+			&session.BudgetLimit, &session.BudgetUsed, &session.TokensUsed,
+			&session.MsgCount, &session.Status, &session.CreatedAt, &session.ExpiresAt)
+	if err != nil {
+		return nil
+	}
+	if len(agentConfig) > 0 {
+		json.Unmarshal(agentConfig, &session.AgentConfig)
+	}
+	if time.Now().After(session.ExpiresAt) && session.Status == "active" {
+		s.EndPlaygroundSession(tenant, id)
+		session.Status = "expired"
+	}
+	return &session
+}
+
+func (s *MeshStore) UpdatePlaygroundUsage(tenant, id string, tokens int, cost float64) {
+	_, err := s.db.Exec(`
+		UPDATE playground_sessions
+		SET tokens_used = tokens_used + $1, budget_used = budget_used + $2, message_count = message_count + 1
+		WHERE id = $3 AND tenant = $4`,
+		tokens, cost, id, tenant)
+	if err != nil {
+		log.Printf("UpdatePlaygroundUsage: %v", err)
+	}
+}
+
+func (s *MeshStore) EndPlaygroundSession(tenant, id string) {
+	_, err := s.db.Exec(`UPDATE playground_sessions SET status = 'ended' WHERE id = $1 AND tenant = $2`, id, tenant)
+	if err != nil {
+		log.Printf("EndPlaygroundSession: %v", err)
+	}
+}
+
 var errAgentNotFound = &agentNotFoundError{}
 
 type agentNotFoundError struct{}
