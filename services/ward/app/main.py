@@ -196,16 +196,41 @@ _BLOCKED_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.I),
     re.compile(r"jailbreak", re.I),
     re.compile(r"system\s+prompt", re.I),
+    re.compile(r"you\s+are\s+now\s+(in\s+)?", re.I),
+    re.compile(r"pretend\s+you\s+are", re.I),
+    re.compile(r"forget\s+(all\s+|your\s+)?instructions", re.I),
+    re.compile(r"act\s+as\s+if\s+you\s+have\s+no\s+restrictions", re.I),
+    re.compile(r"DAN\s+mode", re.I),
+    re.compile(r"developer\s+mode\s+enabled", re.I),
 ]
-_PII_PATTERN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b|\b\d{16}\b")
-_RISK_KEYWORDS = ["weapon", "explosive", "harmful", "illegal"]
+_PII_PATTERN = re.compile(
+    r"\b\d{3}-\d{2}-\d{4}\b"           # SSN
+    r"|\b\d{16}\b"                       # credit card (16 digits)
+    r"|\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"  # credit card with separators
+    r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"  # email
+)
+_RISK_KEYWORDS = [
+    "weapon", "explosive", "harmful", "illegal",
+    "hack", "exploit", "vulnerability", "malware",
+    "password", "credential", "secret key", "api key",
+]
+
+
+def _match_rule_pattern(pattern: str, text: str) -> bool:
+    try:
+        return bool(re.search(pattern, text, re.IGNORECASE))
+    except re.error:
+        return pattern.lower() in text.lower()
 
 
 def _seed_rules() -> None:
     defaults = [
-        CreateRuleRequest(type="injection", pattern="ignore previous instructions", action=RuleAction.BLOCK, severity=Severity.HIGH),
-        CreateRuleRequest(type="pii", pattern=r"\d{3}-\d{2}-\d{4}", action=RuleAction.REDACT, severity=Severity.MEDIUM),
-        CreateRuleRequest(type="policy", pattern="confidential", action=RuleAction.WARN, severity=Severity.LOW),
+        CreateRuleRequest(type="injection", pattern=r"ignore\s+(all\s+)?previous\s+instructions", action=RuleAction.BLOCK, severity=Severity.HIGH),
+        CreateRuleRequest(type="injection", pattern=r"(jailbreak|DAN\s+mode|developer\s+mode)", action=RuleAction.BLOCK, severity=Severity.HIGH),
+        CreateRuleRequest(type="pii", pattern=r"\b\d{3}-\d{2}-\d{4}\b", action=RuleAction.REDACT, severity=Severity.HIGH),
+        CreateRuleRequest(type="pii", pattern=r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", action=RuleAction.REDACT, severity=Severity.HIGH),
+        CreateRuleRequest(type="policy", pattern=r"\b(confidential|internal\s+only|do\s+not\s+share)\b", action=RuleAction.WARN, severity=Severity.MEDIUM),
+        CreateRuleRequest(type="policy", pattern=r"\b(password|secret.?key|api.?key|private.?key)\b", action=RuleAction.WARN, severity=Severity.MEDIUM),
     ]
     for req in defaults:
         rule_id = str(uuid.uuid4())
@@ -233,7 +258,7 @@ def _layer_policy_check(text: str, agent_id: str) -> LayerResult:
     for rule in _rules.values():
         if rule.agent_id not in (agent_id, "*"):
             continue
-        if rule.type == "policy" and rule.pattern.lower() in text.lower():
+        if rule.type == "policy" and _match_rule_pattern(rule.pattern, text):
             verdict = Verdict.BLOCK if rule.action == RuleAction.BLOCK else Verdict.WARN
             if rule.action == RuleAction.REDACT:
                 verdict = Verdict.REDACT
@@ -270,7 +295,7 @@ def _layer_pattern_prefilter(text: str, agent_id: str = "*") -> LayerResult:
     for rule in _rules.values():
         if rule.agent_id not in (agent_id, "*"):
             continue
-        if rule.type in ("injection", "pii") and rule.pattern.lower() in text.lower():
+        if rule.type in ("injection", "pii") and _match_rule_pattern(rule.pattern, text):
             verdict = Verdict.BLOCK if rule.action == RuleAction.BLOCK else Verdict.REDACT if rule.action == RuleAction.REDACT else Verdict.WARN
             return LayerResult(
                 layer="pattern_prefilter",
