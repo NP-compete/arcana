@@ -40,4 +40,5 @@ use (
 	./pkg/temporal
 	./pkg/ward
 	./pkg/tracing
+	./pkg/security
 )
