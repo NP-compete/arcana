@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"log"
 	"time"
 
@@ -653,6 +654,116 @@ func (s *MeshStore) EndPlaygroundSession(tenant, id string) {
 	_, err := s.db.Exec(`UPDATE playground_sessions SET status = 'ended' WHERE id = $1 AND tenant = $2`, id, tenant)
 	if err != nil {
 		log.Printf("EndPlaygroundSession: %v", err)
+	}
+}
+
+// --- Checkpoint store (in-memory, mirrors DB pattern) ---
+
+var checkpointStore = struct {
+	sync.RWMutex
+	items   map[string][]Checkpoint
+	counter map[string]int
+}{items: make(map[string][]Checkpoint), counter: make(map[string]int)}
+
+func (s *MeshStore) NextCheckpointVersion(tenant, agentName string) int {
+	checkpointStore.Lock()
+	defer checkpointStore.Unlock()
+	key := tenant + "/" + agentName
+	checkpointStore.counter[key]++
+	return checkpointStore.counter[key]
+}
+
+func (s *MeshStore) SaveCheckpoint(cp *Checkpoint) {
+	checkpointStore.Lock()
+	defer checkpointStore.Unlock()
+	key := cp.Tenant + "/" + cp.AgentName
+	checkpointStore.items[key] = append(checkpointStore.items[key], *cp)
+}
+
+func (s *MeshStore) ListCheckpoints(tenant, agentName string) []Checkpoint {
+	checkpointStore.RLock()
+	defer checkpointStore.RUnlock()
+	return checkpointStore.items[tenant+"/"+agentName]
+}
+
+func (s *MeshStore) GetCheckpoint(tenant, cpID string) *Checkpoint {
+	checkpointStore.RLock()
+	defer checkpointStore.RUnlock()
+	for _, cps := range checkpointStore.items {
+		for i := range cps {
+			if cps[i].ID == cpID {
+				return &cps[i]
+			}
+		}
+	}
+	return nil
+}
+
+// --- Dependency graph (tracks A2A delegations for cascade analysis) ---
+
+var depGraph = struct {
+	sync.RWMutex
+	edges map[string]map[string]int // source → target → call count
+}{edges: make(map[string]map[string]int)}
+
+func (s *MeshStore) RecordDependency(tenant, source, target string) {
+	depGraph.Lock()
+	defer depGraph.Unlock()
+	key := tenant + "/" + source
+	if depGraph.edges[key] == nil {
+		depGraph.edges[key] = make(map[string]int)
+	}
+	depGraph.edges[key][target]++
+}
+
+func (s *MeshStore) GetDependencyGraph(tenant string) []map[string]interface{} {
+	depGraph.RLock()
+	defer depGraph.RUnlock()
+	edges := make([]map[string]interface{}, 0)
+	prefix := tenant + "/"
+	for key, targets := range depGraph.edges {
+		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
+			source := key[len(prefix):]
+			for target, count := range targets {
+				edges = append(edges, map[string]interface{}{
+					"source":     source,
+					"target":     target,
+					"call_count": count,
+				})
+			}
+		}
+	}
+	return edges
+}
+
+func (s *MeshStore) GetCascadeImpact(tenant, agentName string) map[string]interface{} {
+	depGraph.RLock()
+	defer depGraph.RUnlock()
+	prefix := tenant + "/"
+
+	upstream := []string{}
+	downstream := []string{}
+
+	for key, targets := range depGraph.edges {
+		if len(key) <= len(prefix) {
+			continue
+		}
+		source := key[len(prefix):]
+		for target := range targets {
+			if target == agentName {
+				upstream = append(upstream, source)
+			}
+			if source == agentName {
+				downstream = append(downstream, target)
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"agent":              agentName,
+		"upstream_affected":  upstream,
+		"downstream_affected": downstream,
+		"total_blast_radius": len(upstream) + len(downstream),
 	}
 }
 

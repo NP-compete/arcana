@@ -74,6 +74,43 @@ func main() {
 		srv.handlePlaygroundGet(w, r)
 	}))
 
+	httpSrv.HandleFunc("/api/v1/checkpoints", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			srv.handleCheckpointList(w, r)
+		case http.MethodPost:
+			srv.handleCheckpointCreate(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
+	httpSrv.HandleFunc("/api/v1/checkpoints/restore/", srv.corsMiddleware(srv.handleCheckpointRestore))
+	httpSrv.HandleFunc("/api/v1/checkpoints/diff", srv.corsMiddleware(srv.handleCheckpointDiff))
+
+	httpSrv.HandleFunc("/api/v1/dependencies", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "GET required")
+			return
+		}
+		tenant := extractTenant(r)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"edges": srv.store.GetDependencyGraph(tenant),
+		})
+	}))
+	httpSrv.HandleFunc("/api/v1/dependencies/impact", srv.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "GET required")
+			return
+		}
+		agent := r.URL.Query().Get("agent")
+		if agent == "" {
+			writeError(w, http.StatusBadRequest, "agent query param required")
+			return
+		}
+		tenant := extractTenant(r)
+		writeJSON(w, http.StatusOK, srv.store.GetCascadeImpact(tenant, agent))
+	}))
+
 	httpSrv.HandleFunc("/api/v1/messages", srv.corsMiddleware(srv.handleSendMessage))
 	httpSrv.HandleFunc("/api/v1/messages/", srv.corsMiddleware(srv.handleGetMessages))
 	httpSrv.HandleFunc("/api/v1/delegate", srv.corsMiddleware(srv.handleDelegate))
