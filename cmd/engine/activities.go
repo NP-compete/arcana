@@ -8,10 +8,13 @@ import (
 )
 
 type Activities struct {
-	store    *TaskStore
-	react    *ReActEngine
-	llm      *LLMClient
-	services *ServiceClients
+	store     *TaskStore
+	react     *ReActEngine
+	llm       *LLMClient
+	services  *ServiceClients
+	contexts  map[string]*ContextDAG
+	retrieval *RetrievalPolicy
+	planner   *MCTSPlanner
 }
 
 func (a *Activities) PlanActivity(_ context.Context, task TaskRequest, step int) (*PlanResult, error) {
@@ -24,13 +27,35 @@ func (a *Activities) PlanActivity(_ context.Context, task TaskRequest, step int)
 		}, nil
 	}
 
+	// Proactive retrieval: check if the goal needs fresh data
+	retrievalContext := ""
+	if a.retrieval != nil {
+		if shouldRetrieve, reason := a.retrieval.ShouldRetrieve(task.Goal, 0.5); shouldRetrieve {
+			log.Printf("plan: proactive retrieval triggered (%s)", reason)
+			retrievalContext = "\n[Proactive retrieval triggered — search for fresh data before answering]"
+		}
+	}
+
+	// Context folding: track this step
+	if a.contexts != nil {
+		dag, ok := a.contexts[task.ID]
+		if !ok {
+			dag = NewContextDAG(200000)
+			a.contexts[task.ID] = dag
+		}
+		dag.AddNode(fmt.Sprintf("step-%d-plan", step), task.Goal, "")
+		if strategy := dag.ShouldCompress(); strategy != "none" {
+			log.Printf("plan: context compression needed (%s), budget remaining: %d", strategy, dag.BudgetRemaining())
+		}
+	}
+
 	prompt := fmt.Sprintf(
-		"You are agent '%s'. Goal: %s\nStep %d of the ReAct loop.\n"+
+		"You are agent '%s'. Goal: %s\nStep %d of the ReAct loop.%s\n"+
 			"Decide the next action. Respond with:\n"+
 			"ACTION: <description of what to do>\n"+
 			"TOOL: <tool_name or 'none'>\n"+
 			"Keep it concise.",
-		task.Agent, task.Goal, step+1,
+		task.Agent, task.Goal, step+1, retrievalContext,
 	)
 
 	response, tokens, err := a.llm.Complete(
