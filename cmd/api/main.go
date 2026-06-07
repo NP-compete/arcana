@@ -1698,6 +1698,10 @@ func main() {
 	// Compliance reporting
 	httpSrv.HandleFunc("/api/v1/compliance/report", handleComplianceReport)
 
+	// SCIM v2 provisioning (IdP user sync)
+	httpSrv.HandleFunc("/scim/v2/Users", handleSCIMUsers)
+	httpSrv.HandleFunc("/scim/v2/Users/", handleSCIMUser)
+
 	// OpenAI-compatible API (drop-in replacement for OpenAI SDK clients)
 	httpSrv.HandleFunc("/v1/chat/completions", handleOpenAIChatCompletions)
 	httpSrv.HandleFunc("/v1/models", handleOpenAIModels)
