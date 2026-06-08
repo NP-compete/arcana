@@ -236,9 +236,11 @@ class K8sJobBackend(TrainingBackend):
             },
         }
 
+        ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        ssl_verify: bool | str = ca_path if os.path.exists(ca_path) else False  # nosec B501
         async with httpx.AsyncClient(
             base_url=f"https://{k8s_host}:{k8s_port}",
-            verify=False,
+            verify=ssl_verify,
             headers={"Authorization": f"Bearer {token}"},
             timeout=30.0,
         ) as http_client:

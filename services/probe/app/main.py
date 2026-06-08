@@ -171,7 +171,10 @@ _store_lock = threading.Lock()
 _runs: dict[str, EvalRun] = {}
 
 # --- Database persistence + skills integration ---
-import psycopg2
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None  # type: ignore[assignment]
 
 _db_pool = None
 

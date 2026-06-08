@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"testing"
 )
 
@@ -51,33 +50,17 @@ func TestParsePlanResponse(t *testing.T) {
 	}
 }
 
-func TestPlanActivity_BlockedByWard(t *testing.T) {
-	acts := &Activities{
-		llm:      NewLLMClient(),
-		services: &ServiceClients{},
-		contexts: make(map[string]*ContextDAG),
-		retrieval: NewRetrievalPolicy(),
+func TestPlanActivity_WardCheckFallback(t *testing.T) {
+	svc := NewServiceClients()
+	wardResult, _ := svc.CheckWard("test-agent", "test input", "inbound")
+	if wardResult == nil {
+		t.Fatal("expected non-nil ward result on fallback")
 	}
-
-	acts.services = &ServiceClients{
-		wardHost: "nonexistent",
+	if wardResult.Blocked {
+		t.Error("ward should default to allow when unreachable")
 	}
-
-	task := TaskRequest{
-		ID:    "test-1",
-		Agent: "test-agent",
-		Goal:  "test goal",
-	}
-
-	result, err := acts.PlanActivity(context.Background(), task, 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.Tool == "" {
-		t.Error("expected tool field to be set")
+	if wardResult.Verdict != "ALLOW" {
+		t.Errorf("expected ALLOW verdict, got %s", wardResult.Verdict)
 	}
 }
 

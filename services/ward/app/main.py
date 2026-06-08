@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import logging
+import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -16,10 +16,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import asyncpg
-import structlog
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+import asyncpg  # noqa: E402
+import structlog  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -654,5 +654,6 @@ async def ward_stats(auth: dict = _auth_dep) -> dict[str, Any]:
         "warned": warned,
         "passed": passed,
         "block_rate": round(block_rate, 4),
+        "rule_count": rule_count,
         "top_violations": top_violations,
     }
